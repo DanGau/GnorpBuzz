@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.vite/
+*.log
+.DS_Store
+.claude/skills/game-eyes/node_modules/
+.claude/skills/game-eyes/package-lock.json
+app/screenshots/
