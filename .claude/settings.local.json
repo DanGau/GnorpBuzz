@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"%CLAUDE_PROJECT_DIR%/.claude/hooks/enforce-verification.mjs\"",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-verification.mjs\"",
             "timeout": 30
           }
         ]
