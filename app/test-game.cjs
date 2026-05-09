@@ -11,7 +11,7 @@ const http = require('http');
 const path = require('path');
 
 const APP_DIR = __dirname;
-const DEV_PORT = parseInt(process.env.EYE_DEV_PORT || '5173', 10);
+const DEV_PORT = parseInt(process.env.EYE_DEV_PORT || '5180', 10);
 const URL = `http://localhost:${DEV_PORT}`;
 const IS_WIN = process.platform === 'win32';
 
@@ -78,11 +78,16 @@ async function main() {
     const canvasOk = await page.evaluate(() => !!document.querySelector('canvas'));
     if (!canvasOk) throw new Error('No canvas element found');
 
-    const after = await page.evaluate(() => (window).debug.stepAndRender(60));
-    console.log('[test] After stepAndRender(60):', JSON.stringify(after));
-    if (after.tick !== snap.tick + 60) {
-      throw new Error(`stepAndRender did not advance ticks (got ${after.tick}, expected ${snap.tick + 60})`);
-    }
+    const after = await page.evaluate(() => {
+      const d = (window).debug;
+      d.pause();
+      const before = d.snapshot();
+      const result = d.stepAndRender(60);
+      return { delta: result.tick - before.tick, paused: result.paused };
+    });
+    console.log('[test] pause + stepAndRender(60) delta:', JSON.stringify(after));
+    if (after.delta !== 60) throw new Error(`stepAndRender advanced ${after.delta} ticks, expected 60`);
+    if (!after.paused) throw new Error('stepAndRender did not preserve paused state');
 
     console.log('[test] PASS');
   } catch (err) {

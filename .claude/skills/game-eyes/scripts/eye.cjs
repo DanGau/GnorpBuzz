@@ -66,7 +66,7 @@ const APP         = findApp();
 const SESSION_F   = path.join(os.tmpdir(), 'eye-session-gnorpbuzz.json');
 const SCREENSHOTS = path.join(APP, 'screenshots');
 const CDP_PORT    = parseInt(process.env.EYE_CDP_PORT  || '9222', 10);
-const DEV_PORT    = parseInt(process.env.EYE_DEV_PORT  || '5173', 10);
+const DEV_PORT    = parseInt(process.env.EYE_DEV_PORT  || '5180', 10);
 const GAME_URL    = `http://localhost:${DEV_PORT}`;
 const VW          = 1600;
 const VH          = 900;
@@ -132,7 +132,10 @@ function findChromeBinary() {
     const dirs = fs.readdirSync(cacheDir).filter(d => d.startsWith('chromium-')).sort().reverse();
     for (const d of dirs) {
       const candidates = IS_WIN
-        ? [path.join(cacheDir, d, 'chrome-win', 'chrome.exe')]
+        ? [
+            path.join(cacheDir, d, 'chrome-win64', 'chrome.exe'),
+            path.join(cacheDir, d, 'chrome-win', 'chrome.exe'),
+          ]
         : [
             path.join(cacheDir, d, 'chrome-linux64', 'chrome'),
             path.join(cacheDir, d, 'chrome-linux', 'chrome'),
@@ -453,7 +456,7 @@ async function bootGame(cdp) {
   let needsNav = true;
   try {
     const ready = await cdp.eval(
-      'typeof window.debug !== "undefined" && window.location.href.includes("localhost")'
+      `typeof window.debug !== "undefined" && window.location.href.includes("localhost:${DEV_PORT}")`
     );
     if (ready) {
       const healthy = await cdp.eval('!!document.querySelector("canvas")');

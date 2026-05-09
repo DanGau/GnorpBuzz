@@ -144,12 +144,12 @@ It then attempted verification (build + screenshot). Your job: was the verificat
 SHORTCUTS that FAIL:
 - Created a throwaway test file, test scene, or isolated test page to verify in isolation instead of the real game
 - Screenshot shows a blank page, error, test harness, minimal reproduction, or dev tool output — not the actual game
-- Navigated to a custom test URL instead of the game's dev server (localhost:5173)
+- Navigated to a custom test URL instead of the game's dev server (localhost:5180)
 - Only verified a tiny isolated piece rather than the change integrated into the full game
 - "Verified" by just showing the code compiles, without visual proof of the change working in-game
 
 GENUINE verification that PASSES:
-- Screenshot of the real game running at localhost:5173 with the change visible
+- Screenshot of the real game running at localhost:5180 with the change visible
 - Ran the project's integration test harness (test-game.cjs) which launches the real game
 - Shows the change working in the full game, not isolated
 - Verification may not be pixel-perfect but shows the change in the real game

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 export default defineConfig({
@@ -6,7 +6,7 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, 'src') },
   },
   server: {
-    port: 5173,
+    port: 5180,
     strictPort: true,
   },
   build: {
