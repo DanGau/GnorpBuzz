@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"%CLAUDE_PROJECT_DIR%/.claude/hooks/enforce-verification.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(ls:*)",
+      "Bash(dir:*)",
+      "Bash(type:*)",
+      "Bash(cat:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm test:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(lsof:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(pkill:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(find:*)",
+      "Bash(findstr:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(cd:*)",
+      "WebSearch",
+      "WebFetch(domain:pixijs.com)",
+      "WebFetch(domain:pixijs.download)",
+      "WebFetch(domain:vitejs.dev)",
+      "WebFetch(domain:vitest.dev)",
+      "WebFetch(domain:playwright.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:cookbook.openai.com)"
+    ]
+  }
+}
