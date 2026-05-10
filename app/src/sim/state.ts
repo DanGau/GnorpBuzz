@@ -1,8 +1,6 @@
 // Plain-data game state for the agent-based Phase 1 MVP.
-// Single Forager Hive and single Wax Hive (fixed structures). Player buys
-// individual worker bees to grow each hive's roster. No queen / auto-spawn.
-// Vessel transitions to 'ready' when full and waits for player click.
-// See docs/agent-behavior.md.
+// Three buildings: Forager Hive, Wax Hive, Builder Hive (fixed structures).
+// Player buys individual worker bees. Vessel waits for a click to launch.
 
 export type VesselPhase =
   | 'building'
@@ -11,7 +9,7 @@ export type VesselPhase =
   | 'crashing'
   | 'crashed'
   | 'reviewed';
-export type HiveType = 'forager' | 'wax';
+export type HiveType = 'forager' | 'wax' | 'builder';
 
 export interface ForagerHiveData {
   id: string;
@@ -24,10 +22,16 @@ export interface WaxHiveData {
   id: string;
   type: 'wax';
   bees: number;
-  waxBlocks: number; // overflow stockpile when vessel is not building
+  waxBlocks: number; // produced by wax-makers, drained by builders
 }
 
-export type HiveData = ForagerHiveData | WaxHiveData;
+export interface BuilderHiveData {
+  id: string;
+  type: 'builder';
+  bees: number;
+}
+
+export type HiveData = ForagerHiveData | WaxHiveData | BuilderHiveData;
 
 export interface FlowerData {
   id: string;
@@ -56,23 +60,17 @@ export interface GameState {
   journal: { entries: JournalEntry[]; pending: boolean };
 }
 
-// Tuning constants for MVP. Placeholders per docs/mvp-scope.md.
 export const TUNING = {
-  // First bee of each type is free; subsequent cost ceil(BASE * GROWTH^(n-1))
-  // where n = current bee count.
   BEE_BASE_COST: 2,
   BEE_COST_GROWTH: 1.3,
 
-  // Vessel
   VESSEL_BLOCKS_REQUIRED: 8,
   LAUNCH_DURATION_MS: 4000,
   CRASH_DURATION_MS: 2000,
 
-  // Flowers
   FLOWER_YIELD: 5,
   FLOWER_REGROW_MS: 60_000,
 
-  // Bee behavior timings
   BEE_SPEED: 90,
   HARVEST_DURATION_MS: 3000,
   PICKUP_DURATION_MS: 500,
@@ -96,8 +94,10 @@ export function createInitialState(): GameState {
   return {
     tick: 0,
     elapsedMs: 0,
+    // Order matches the slot order in world/layout.ts.
     hives: [
       { id: 'forager-hive', type: 'forager', bees: 0, pollen: 0 },
+      { id: 'builder-hive', type: 'builder', bees: 0 },
       { id: 'wax-hive', type: 'wax', bees: 0, waxBlocks: 0 },
     ],
     flowers,
@@ -119,10 +119,14 @@ export function getWaxHive(state: GameState): WaxHiveData {
   return state.hives.find((h) => h.type === 'wax') as WaxHiveData;
 }
 
+export function getBuilderHive(state: GameState): BuilderHiveData {
+  return state.hives.find((h) => h.type === 'builder') as BuilderHiveData;
+}
+
 export function nextBeeCost(state: GameState, type: HiveType): number {
   const hive = state.hives.find((h) => h.type === type);
   const n = hive?.bees ?? 0;
-  if (n === 0) return 0; // first bee of each type is free
+  if (n === 0) return 0;
   return Math.ceil(TUNING.BEE_BASE_COST * Math.pow(TUNING.BEE_COST_GROWTH, n - 1));
 }
 
@@ -134,8 +138,6 @@ export function totalPollen(state: GameState): number {
   return state.hives.reduce((sum, h) => sum + (h.type === 'forager' ? h.pollen : 0), 0);
 }
 
-// The vessel's deliveredBlocks IS the global wax pool. Wax-makers add to it;
-// bee purchases drain from it; vessel "completes" when it reaches required.
 export function spendableWax(state: GameState): number {
   return state.vessel.deliveredBlocks + getWaxHive(state).waxBlocks;
 }

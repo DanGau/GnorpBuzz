@@ -16,11 +16,13 @@ export const WORLD = {
   // Vessel construction site.
   VESSEL_PAD: { x: 640, y: 460 },
 
-  // Single Forager Hive on the left, single Wax Hive on the right. Vessel pad
-  // sits between them at center-meadow.
+  // Three buildings spread across the meadow. Vessel pad sits above the
+  // builder hive (center). Slot order matches state.hives order:
+  //   [0] Forager Hive (left), [1] Builder Hive (center), [2] Wax Hive (right).
   HIVE_SLOTS: [
-    { x: 380, y: 620 }, // Forager Hive (left of vessel)
-    { x: 900, y: 620 }, // Wax Hive (right of vessel)
+    { x: 240, y: 620 },  // Forager Hive
+    { x: 640, y: 620 },  // Builder Hive (under the vessel pad)
+    { x: 1040, y: 620 }, // Wax Hive
   ],
 
   // Decorative meadow flowers (static for MVP, future nectar mini-event).

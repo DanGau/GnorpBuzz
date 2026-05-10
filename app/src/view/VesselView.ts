@@ -1,4 +1,4 @@
-import { Container, Graphics, FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics } from 'pixi.js';
 import type { GameState } from '../sim/state';
 import { TUNING } from '../sim/state';
 import { WORLD } from '../world/layout';
@@ -11,29 +11,16 @@ export class VesselView {
   private pile: Graphics;
   private airplane: Graphics;
   private hint: Graphics;
-  private hitArea: Graphics;
   private pulse = 0;
-  private onLaunch: () => void;
 
-  constructor(onLaunch: () => void) {
-    this.onLaunch = onLaunch;
+  constructor() {
     this.container = new Container();
     this.pile = new Graphics();
     this.airplane = new Graphics();
     this.hint = new Graphics();
-    this.hitArea = new Graphics();
     this.container.addChild(this.pile);
     this.container.addChild(this.hint);
     this.container.addChild(this.airplane);
-    this.container.addChild(this.hitArea);
-
-    // The hit area sits invisibly on top of the airplane and only catches
-    // clicks while the vessel is 'ready'. It's enabled/disabled in update().
-    this.hitArea.eventMode = 'none';
-    this.hitArea.cursor = 'pointer';
-    this.hitArea.on('pointertap', (_e: FederatedPointerEvent) => {
-      this.onLaunch();
-    });
   }
 
   update(state: GameState, dtMs: number): void {
@@ -44,8 +31,6 @@ export class VesselView {
 
     const v = state.vessel;
     if (v.phase === 'reviewed') {
-      this.hitArea.eventMode = 'none';
-      this.hitArea.clear();
       return;
     }
 
@@ -56,27 +41,17 @@ export class VesselView {
       this.airplane.x = PAD.x;
       this.airplane.y = PAD.y;
       this.airplane.rotation = 0;
-      this.hitArea.eventMode = 'none';
-      this.hitArea.clear();
       return;
     }
 
     if (v.phase === 'ready') {
-      // Airplane assembled, sitting on the pad, gently glowing/pulsing
       const breath = 1 + Math.sin(this.pulse * 3) * 0.08;
-      // Glow halo
       this.hint.circle(PAD.x, PAD.y - 4, 70 * breath).fill({ color: 0xfff2cf, alpha: 0.18 });
       this.hint.circle(PAD.x, PAD.y - 4, 50 * breath).fill({ color: 0xffe680, alpha: 0.22 });
       this.drawAirplane(1);
       this.airplane.x = PAD.x;
       this.airplane.y = PAD.y - 4;
       this.airplane.rotation = -0.08;
-      // Activate hit area
-      this.hitArea.eventMode = 'static';
-      this.hitArea.clear();
-      this.hitArea
-        .roundRect(PAD.x - 60, PAD.y - 30, 120, 50, 8)
-        .fill({ color: 0xffffff, alpha: 0.001 });
       return;
     }
 
@@ -105,8 +80,6 @@ export class VesselView {
     this.airplane.x = x;
     this.airplane.y = y;
     this.airplane.rotation = rotation;
-    this.hitArea.eventMode = 'none';
-    this.hitArea.clear();
   }
 
   private drawPile(delivered: number, required: number): void {

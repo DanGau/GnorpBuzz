@@ -4,11 +4,13 @@ import { HiveControlPanel } from './HiveControlPanel';
 import { VesselProgress } from './VesselProgress';
 import { JournalModal } from './JournalModal';
 import { EndBanner } from './EndBanner';
+import { LaunchButton } from './LaunchButton';
 import { WORLD } from '../world/layout';
 
 export class UI {
   private widgets: { update(): void }[];
   private hivePanels: HiveControlPanel[];
+  private launchButton: LaunchButton;
   private game: Game;
 
   constructor(game: Game, mount: HTMLElement) {
@@ -18,18 +20,25 @@ export class UI {
     const journal = new JournalModal(game);
     const endBanner = new EndBanner(game);
 
-    // Hive panels are anchored just above the hive's top edge in world space.
-    // The hive bodies extend ~50px above their slot center, so anchor at
-    // slot.y - 56 → panel sits with its bottom 6px above the hive top.
+    // Hive panels — anchor just above each hive's top edge.
     const ANCHOR_OFFSET = 56;
     const foragerSlot = WORLD.HIVE_SLOTS[0];
-    const waxSlot = WORLD.HIVE_SLOTS[1];
+    const builderSlot = WORLD.HIVE_SLOTS[1];
+    const waxSlot = WORLD.HIVE_SLOTS[2];
+
     const foragerPanel = new HiveControlPanel(
       game,
       'forager',
       'forager-hive',
       foragerSlot.x,
       foragerSlot.y - ANCHOR_OFFSET,
+    );
+    const builderPanel = new HiveControlPanel(
+      game,
+      'builder',
+      'builder-hive',
+      builderSlot.x,
+      builderSlot.y - ANCHOR_OFFSET,
     );
     const waxPanel = new HiveControlPanel(
       game,
@@ -39,22 +48,36 @@ export class UI {
       waxSlot.y - ANCHOR_OFFSET,
     );
 
+    // Launch button — anchored just below the airplane on the vessel pad.
+    this.launchButton = new LaunchButton(game);
+
     mount.appendChild(resourceBar.el);
     mount.appendChild(foragerPanel.el);
+    mount.appendChild(builderPanel.el);
     mount.appendChild(waxPanel.el);
+    mount.appendChild(this.launchButton.el);
     mount.appendChild(vesselProgress.el);
     mount.appendChild(journal.el);
     mount.appendChild(endBanner.el);
 
-    this.hivePanels = [foragerPanel, waxPanel];
-    this.widgets = [resourceBar, foragerPanel, waxPanel, vesselProgress, journal, endBanner];
+    this.hivePanels = [foragerPanel, builderPanel, waxPanel];
+    this.widgets = [
+      resourceBar,
+      foragerPanel,
+      builderPanel,
+      waxPanel,
+      this.launchButton,
+      vesselProgress,
+      journal,
+      endBanner,
+    ];
 
-    game.renderer.onFit(() => this.repositionHivePanels());
-    this.repositionHivePanels();
+    game.renderer.onFit(() => this.repositionAnchored());
+    this.repositionAnchored();
     this.update();
   }
 
-  private repositionHivePanels(): void {
+  private repositionAnchored(): void {
     for (const panel of this.hivePanels) {
       const screen = this.game.renderer.worldToScreen(
         panel.anchor.worldX,
@@ -63,6 +86,13 @@ export class UI {
       );
       panel.reposition(screen.x, screen.y);
     }
+    // Launch button sits just below the airplane.
+    const launch = this.game.renderer.worldToScreen(
+      WORLD.VESSEL_PAD.x,
+      WORLD.VESSEL_PAD.y + 36,
+      this.game.app,
+    );
+    this.launchButton.reposition(launch.x, launch.y);
   }
 
   update(): void {

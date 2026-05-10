@@ -94,6 +94,41 @@
       .hive-control.hive-wax .header .count-badge {
         background: rgba(212, 168, 106, 0.25); color: #d4a86a;
       }
+      .hive-control.hive-builder .header .count-badge {
+        background: rgba(224, 122, 58, 0.28); color: #f0a070;
+      }
+
+      /* Launch button — anchored next to the airplane in world space. */
+      .launch-anchor {
+        position: absolute;
+        transform: translate(-50%, 0);
+        pointer-events: auto;
+        opacity: 1;
+        transition: opacity 200ms ease, transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+      }
+      .launch-anchor.hidden {
+        opacity: 0;
+        transform: translate(-50%, -8px) scale(0.92);
+        pointer-events: none;
+      }
+      .launch-anchor .launch-btn {
+        background: #f5d166; color: #2a1f0a;
+        font-weight: 700; font-size: 14px; letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 10px 22px;
+        border: none; border-radius: 999px;
+        cursor: pointer;
+        box-shadow: 0 6px 20px rgba(255, 220, 100, 0.45), 0 2px 8px rgba(0, 0, 0, 0.4);
+        animation: launch-pulse 1.5s ease-in-out infinite;
+      }
+      .launch-anchor .launch-btn:hover {
+        background: #ffe680;
+        transform: translateY(-1px);
+      }
+      @keyframes launch-pulse {
+        0%, 100% { box-shadow: 0 6px 20px rgba(255, 220, 100, 0.45), 0 2px 8px rgba(0, 0, 0, 0.4); }
+        50% { box-shadow: 0 6px 28px rgba(255, 220, 100, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4); }
+      }
 
       .vessel-progress {
         position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);

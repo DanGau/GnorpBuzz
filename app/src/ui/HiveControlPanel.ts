@@ -1,5 +1,11 @@
 import type { Game } from '../game/Game';
-import { nextBeeCost, spendableWax, getForagerHive, getWaxHive } from '../sim/state';
+import {
+  nextBeeCost,
+  spendableWax,
+  getForagerHive,
+  getWaxHive,
+  getBuilderHive,
+} from '../sim/state';
 import type { HiveType } from '../sim/state';
 
 // HTML control panel anchored above its hive in world space. Hidden by
@@ -24,8 +30,14 @@ export class HiveControlPanel {
     this.hiveId = hiveId;
     this.el = document.createElement('div');
     this.el.className = `hive-control panel hive-${type} hidden`;
-    const title = type === 'forager' ? 'Forager Bees' : 'Wax-maker Bees';
-    const buttonLabel = type === 'forager' ? 'Build forager' : 'Build wax-maker';
+    const title =
+      type === 'forager' ? 'Forager Bees' : type === 'wax' ? 'Wax-maker Bees' : 'Builder Bees';
+    const buttonLabel =
+      type === 'forager'
+        ? 'Hire forager'
+        : type === 'wax'
+          ? 'Hire wax-maker'
+          : 'Hire builder';
     this.el.innerHTML = `
       <div class="header">
         <span class="title">${title}</span>
@@ -59,7 +71,9 @@ export class HiveControlPanel {
     const hive =
       this.type === 'forager'
         ? getForagerHive(this.game.state)
-        : getWaxHive(this.game.state);
+        : this.type === 'wax'
+          ? getWaxHive(this.game.state)
+          : getBuilderHive(this.game.state);
     this.headerCount.textContent = hive.bees.toString();
     this.costEl.textContent = cost === 0 ? 'FREE' : `${cost} wax`;
     this.button.disabled = cost > 0 && spendableWax(this.game.state) < cost;

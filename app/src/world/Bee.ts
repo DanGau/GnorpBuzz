@@ -1,9 +1,9 @@
-import type { GameState, ForagerHiveData } from '../sim/state';
+import type { GameState, ForagerHiveData, WaxHiveData } from '../sim/state';
 import { TUNING } from '../sim/state';
 import type { World } from './World';
 import { WORLD } from './layout';
 
-export type BeeRole = 'forager' | 'wax-maker';
+export type BeeRole = 'forager' | 'wax-maker' | 'builder';
 
 export type BeeState =
   | 'idle'
@@ -13,6 +13,8 @@ export type BeeState =
   | 'picking-up-pollen'
   | 'flying-home-with-pollen'
   | 'producing-wax'
+  | 'flying-to-wax-source'
+  | 'picking-up-block'
   | 'flying-to-vessel'
   | 'dropping-block'
   | 'flying-home-empty';
@@ -38,7 +40,6 @@ export class Bee {
   targetFlowerId: string | null;
   targetHiveId: string | null;
   flapPhase: number;
-  // For idle wander pacing
   idleWaitMs: number;
 
   constructor(role: BeeRole, homeHiveId: string, homeX: number, homeY: number) {
@@ -58,7 +59,6 @@ export class Bee {
     this.idleWaitMs = 0;
   }
 
-  /** Move toward (targetX, targetY). Returns true when arrived. */
   private flyToward(dtMs: number): boolean {
     const dx = this.targetX - this.x;
     const dy = this.targetY - this.y;
@@ -81,12 +81,14 @@ export class Bee {
   }
 
   update(dtMs: number, state: GameState, world: World): void {
-    this.flapPhase += dtMs / 1000 * 30;
+    this.flapPhase += (dtMs / 1000) * 30;
 
     if (this.role === 'forager') {
       this.updateForager(dtMs, state, world);
-    } else {
+    } else if (this.role === 'wax-maker') {
       this.updateWaxMaker(dtMs, state, world);
+    } else {
+      this.updateBuilder(dtMs, state, world);
     }
   }
 
@@ -95,7 +97,6 @@ export class Bee {
   private updateForager(dtMs: number, state: GameState, world: World): void {
     switch (this.state) {
       case 'idle': {
-        // Try to claim a flower; if none available, wander briefly.
         this.idleWaitMs -= dtMs;
         if (this.idleWaitMs <= 0) {
           const claimed = this.tryClaimFlower(state, world);
@@ -106,13 +107,11 @@ export class Bee {
             this.pickIdleTarget(world);
           }
         }
-        // Always tick a small wander so bees look alive while idle
         this.flyToward(dtMs);
         break;
       }
       case 'flying-to-flower': {
         if (this.flyToward(dtMs)) {
-          // Verify flower is still ours and harvestable
           const flower = state.flowers.find((f) => f.id === this.targetFlowerId);
           if (!flower || flower.claimedByBeeId !== this.id || flower.yieldRemaining === 0) {
             this.releaseFlowerClaim(state);
@@ -137,7 +136,6 @@ export class Bee {
           }
           this.targetFlowerId = null;
           this.carrying = 'pollen';
-          // Head home
           const home = this.homePos(world);
           this.targetX = home.x;
           this.targetY = home.y - 10;
@@ -147,7 +145,6 @@ export class Bee {
       }
       case 'flying-home-with-pollen': {
         if (this.flyToward(dtMs)) {
-          // Deposit pollen into home hive
           const hive = state.hives.find((h) => h.id === this.homeHiveId);
           if (hive && hive.type === 'forager') {
             (hive as ForagerHiveData).pollen += 1;
@@ -159,7 +156,6 @@ export class Bee {
         break;
       }
       default: {
-        // Foragers shouldn't enter wax-maker states; reset if they do.
         this.returnToIdle(world);
       }
     }
@@ -197,6 +193,9 @@ export class Bee {
   }
 
   // -------------------- Wax-maker --------------------
+  // Wax-makers fetch pollen, return home, produce a wax block, deposit it
+  // in the wax hive's stockpile. They never visit the vessel — that's the
+  // builder's job.
 
   private updateWaxMaker(dtMs: number, state: GameState, world: World): void {
     switch (this.state) {
@@ -219,7 +218,6 @@ export class Bee {
       }
       case 'flying-to-pollen-source': {
         if (this.flyToward(dtMs)) {
-          // Verify still has pollen
           const hive = state.hives.find((h) => h.id === this.targetHiveId);
           if (hive && hive.type === 'forager' && (hive as ForagerHiveData).pollen > 0) {
             this.state = 'picking-up-pollen';
@@ -239,13 +237,11 @@ export class Bee {
             (hive as ForagerHiveData).pollen -= 1;
             this.carrying = 'pollen';
             this.targetHiveId = null;
-            // Head home to produce
             const home = this.homePos(world);
             this.targetX = home.x;
             this.targetY = home.y - 10;
             this.state = 'flying-home-with-pollen';
           } else {
-            // Source ran dry between flights; back to idle
             this.returnToIdle(world);
           }
         }
@@ -264,11 +260,99 @@ export class Bee {
         this.x = this.targetX + Math.sin(this.workTimer / 100) * 2;
         this.y = this.targetY + Math.cos(this.workTimer / 90) * 2;
         if (this.workTimer <= 0) {
-          this.carrying = 'wax-block';
-          // Head to the vessel
-          this.targetX = WORLD.VESSEL_PAD.x;
-          this.targetY = WORLD.VESSEL_PAD.y - 30;
-          this.state = 'flying-to-vessel';
+          // Deposit the freshly-made block at the home stockpile.
+          const home = state.hives.find((h) => h.id === this.homeHiveId);
+          if (home && home.type === 'wax') {
+            (home as WaxHiveData).waxBlocks += 1;
+          }
+          this.carrying = 'none';
+          this.state = 'idle';
+          this.idleWaitMs = 0;
+        }
+        break;
+      }
+      default: {
+        this.returnToIdle(world);
+      }
+    }
+  }
+
+  private findPollenSource(
+    state: GameState,
+    world: World,
+  ): { hiveId: string; x: number; y: number } | null {
+    let best: { hiveId: string; x: number; y: number } | null = null;
+    let bestDist = Infinity;
+    for (const h of state.hives) {
+      if (h.type !== 'forager') continue;
+      if ((h as ForagerHiveData).pollen <= 0) continue;
+      const pos = world.getHivePosition(h.id);
+      if (!pos) continue;
+      const d = Math.hypot(pos.x - this.x, pos.y - this.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { hiveId: h.id, x: pos.x, y: pos.y };
+      }
+    }
+    return best;
+  }
+
+  // -------------------- Builder --------------------
+  // Builders fetch wax blocks from a wax hive's stockpile and deliver them
+  // to the vessel pad.
+
+  private updateBuilder(dtMs: number, state: GameState, world: World): void {
+    switch (this.state) {
+      case 'idle': {
+        this.idleWaitMs -= dtMs;
+        if (this.idleWaitMs <= 0) {
+          // Don't fetch new blocks if the vessel can't accept them.
+          if (state.vessel.phase !== 'building') {
+            this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
+            this.pickIdleTarget(world);
+          } else {
+            const source = this.findWaxSource(state, world);
+            if (source) {
+              this.targetHiveId = source.hiveId;
+              this.targetX = source.x - 25;
+              this.targetY = source.y - 10;
+              this.state = 'flying-to-wax-source';
+            } else {
+              this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
+              this.pickIdleTarget(world);
+            }
+          }
+        }
+        this.flyToward(dtMs);
+        break;
+      }
+      case 'flying-to-wax-source': {
+        if (this.flyToward(dtMs)) {
+          const hive = state.hives.find((h) => h.id === this.targetHiveId);
+          if (hive && hive.type === 'wax' && (hive as WaxHiveData).waxBlocks > 0) {
+            this.state = 'picking-up-block';
+            this.workTimer = TUNING.PICKUP_DURATION_MS;
+          } else {
+            this.targetHiveId = null;
+            this.returnToIdle(world);
+          }
+        }
+        break;
+      }
+      case 'picking-up-block': {
+        this.workTimer -= dtMs;
+        if (this.workTimer <= 0) {
+          const hive = state.hives.find((h) => h.id === this.targetHiveId);
+          if (hive && hive.type === 'wax' && (hive as WaxHiveData).waxBlocks > 0) {
+            (hive as WaxHiveData).waxBlocks -= 1;
+            this.carrying = 'wax-block';
+            this.targetHiveId = null;
+            this.targetX = WORLD.VESSEL_PAD.x;
+            this.targetY = WORLD.VESSEL_PAD.y - 30;
+            this.state = 'flying-to-vessel';
+          } else {
+            this.returnToIdle(world);
+          }
         }
         break;
       }
@@ -285,10 +369,10 @@ export class Bee {
           if (state.vessel.phase === 'building') {
             state.vessel.deliveredBlocks += 1;
           } else {
-            // Vessel doesn't want more blocks (ready/launched/etc.) — stockpile
-            // at home wax hive instead so the work isn't wasted.
-            const home = state.hives.find((h) => h.id === this.homeHiveId);
-            if (home && home.type === 'wax') home.waxBlocks += 1;
+            // Vessel switched away from 'building' mid-trip — return the
+            // block to a wax hive's stockpile instead of losing it.
+            const wax = state.hives.find((h) => h.type === 'wax');
+            if (wax && wax.type === 'wax') (wax as WaxHiveData).waxBlocks += 1;
           }
           this.carrying = 'none';
           const home = this.homePos(world);
@@ -311,15 +395,15 @@ export class Bee {
     }
   }
 
-  private findPollenSource(
+  private findWaxSource(
     state: GameState,
     world: World,
   ): { hiveId: string; x: number; y: number } | null {
     let best: { hiveId: string; x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (const h of state.hives) {
-      if (h.type !== 'forager') continue;
-      if ((h as ForagerHiveData).pollen <= 0) continue;
+      if (h.type !== 'wax') continue;
+      if ((h as WaxHiveData).waxBlocks <= 0) continue;
       const pos = world.getHivePosition(h.id);
       if (!pos) continue;
       const d = Math.hypot(pos.x - this.x, pos.y - this.y);

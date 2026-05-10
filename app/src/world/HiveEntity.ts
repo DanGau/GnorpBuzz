@@ -23,7 +23,8 @@ export class HiveEntity {
   }
 
   spawnBee(): void {
-    const role = this.type === 'forager' ? 'forager' : 'wax-maker';
+    const role =
+      this.type === 'forager' ? 'forager' : this.type === 'wax' ? 'wax-maker' : 'builder';
     this.bees.push(new Bee(role, this.hiveId, this.x, this.y));
   }
 

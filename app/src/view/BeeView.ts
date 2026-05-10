@@ -57,10 +57,11 @@ export class BeeView {
     }
   }
 
-  private drawBee(g: Graphics, role: 'forager' | 'wax-maker'): void {
+  private drawBee(g: Graphics, role: 'forager' | 'wax-maker' | 'builder'): void {
     g.clear();
-    // Wax-makers wear a slightly darker, dustier coat
-    const bodyColor = role === 'forager' ? 0xffd23f : 0xe6b833;
+    // Foragers: bright yellow. Wax-makers: dusty gold. Builders: warm orange.
+    const bodyColor =
+      role === 'forager' ? 0xffd23f : role === 'wax-maker' ? 0xe6b833 : 0xe07a3a;
     g.ellipse(0, 0, 7, 5).fill(bodyColor);
     g.rect(-4, -2, 2.5, 4).fill(0x222222);
     g.rect(1.5, -2, 2.5, 4).fill(0x222222);

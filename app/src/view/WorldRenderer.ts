@@ -9,7 +9,6 @@ import { BeeView } from './BeeView';
 import { VesselView } from './VesselView';
 
 export interface WorldRendererCallbacks {
-  onLaunchClick: () => void;
   onHiveClick: (hiveId: string) => void;
   onBackgroundClick: () => void;
 }
@@ -30,7 +29,7 @@ export class WorldRenderer {
     this.flowerView = new FlowerView();
     this.hiveView = new HiveView(callbacks.onHiveClick);
     this.beeView = new BeeView();
-    this.vesselView = new VesselView(callbacks.onLaunchClick);
+    this.vesselView = new VesselView();
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);

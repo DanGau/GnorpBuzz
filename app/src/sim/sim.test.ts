@@ -8,20 +8,27 @@ import {
   nextBeeCost,
   getForagerHive,
   getWaxHive,
+  getBuilderHive,
 } from './state';
 import { vesselSystem } from './systems/vessel';
 import { buyBee, dismissJournal, launchVessel } from './actions';
 import { serialize, deserialize } from './save';
 
 describe('sim state shape', () => {
-  it('starts with one empty Forager Hive and one empty Wax Hive', () => {
+  it('starts with three empty hives (forager, builder, wax)', () => {
     const s = createInitialState();
-    expect(s.hives).toHaveLength(2);
+    expect(s.hives).toHaveLength(3);
     expect(getForagerHive(s).bees).toBe(0);
+    expect(getBuilderHive(s).bees).toBe(0);
     expect(getWaxHive(s).bees).toBe(0);
     expect(totalBees(s)).toBe(0);
     expect(totalPollen(s)).toBe(0);
     expect(spendableWax(s)).toBe(0);
+  });
+
+  it('first builder bee is free', () => {
+    const s = createInitialState();
+    expect(nextBeeCost(s, 'builder')).toBe(0);
   });
 
   it('starts with flowers in the meadow at full bloom', () => {

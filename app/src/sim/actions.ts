@@ -34,7 +34,6 @@ export function buyBee(state: GameState, type: HiveType): ActionResult {
       state.vessel.phase = 'building';
     }
   }
-  // Add the bee
   const hive = state.hives.find((h) => h.type === type);
   if (hive) hive.bees += 1;
   return { ok: true };

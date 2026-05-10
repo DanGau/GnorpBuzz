@@ -34,10 +34,9 @@ export class VesselProgress {
       this.labelEl.textContent = 'PAPER AIRPLANE — UNDER CONSTRUCTION';
       this.el.classList.remove('ready');
     } else if (v.phase === 'ready') {
-      this.fillEl.style.width = `100%`;
-      this.statusEl.textContent = '✨ Click the airplane to launch!';
-      this.labelEl.textContent = 'PAPER AIRPLANE — READY';
-      this.el.classList.add('ready');
+      // Hide the bottom-center bar; the in-world Launch button takes over.
+      this.el.style.display = 'none';
+      return;
     } else if (v.phase === 'launching') {
       this.fillEl.style.width = `100%`;
       this.statusEl.textContent = 'Ascending…';

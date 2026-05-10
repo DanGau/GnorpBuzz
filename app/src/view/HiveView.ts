@@ -9,7 +9,7 @@ import type { GameState, ForagerHiveData, WaxHiveData } from '../sim/state';
 
 interface HiveSprite {
   id: string;
-  type: 'forager' | 'wax';
+  type: 'forager' | 'wax' | 'builder';
   shadow: Graphics;
   highlight: Graphics;
   body: Graphics;
@@ -93,9 +93,10 @@ export class HiveView {
       if (!simHive) continue;
       if (sprite.type === 'forager') {
         this.drawPollenPots(sprite, (simHive as ForagerHiveData).pollen);
-      } else {
+      } else if (sprite.type === 'wax') {
         this.drawBlockStockpile(sprite, (simHive as WaxHiveData).waxBlocks);
       }
+      // Builder hive has no per-hive resource to render.
       this.drawHighlight(sprite, sprite.id === selectedHiveId);
     }
   }
@@ -127,7 +128,7 @@ export class HiveView {
         g.roundRect(-b.w / 2, b.y, b.w, b.h, 6).fill(colors[i]);
       }
       g.circle(0, 0, 7).fill(0x3a2a10);
-    } else {
+    } else if (sprite.type === 'wax') {
       g.rect(-32, -45, 64, 50).fill(0xc7a86a);
       g.rect(-32, -45, 64, 6).fill(0x8d7440);
       for (let i = 0; i < 4; i++) {
@@ -136,6 +137,25 @@ export class HiveView {
       g.roundRect(-8, -10, 16, 18, 2).fill(0x3a2a10);
       g.rect(12, -60, 10, 18).fill(0x8d7440);
       g.rect(11, -62, 12, 4).fill(0x6b5631);
+    } else {
+      // Builder Hive: a small wooden workshop with a peaked roof and a tool
+      // hanging on the side wall. Cooler/grayer wood tone to distinguish it
+      // from the warm-gold forager skep and the cream wax workshop.
+      // Body
+      g.rect(-26, -34, 52, 42).fill(0x9a7a4f);
+      // Roof (peak)
+      g.poly([-30, -34, 0, -56, 30, -34]).fill(0x6b4f30);
+      // Roof shadow line
+      g.moveTo(-30, -34).lineTo(30, -34).stroke({ color: 0x4a3520, width: 1 });
+      // Vertical plank lines
+      for (let i = 1; i < 4; i++) {
+        g.rect(-26 + i * 13, -34, 1, 42).fill({ color: 0x4a3520, alpha: 0.4 });
+      }
+      // Door
+      g.roundRect(-8, -10, 16, 18, 2).fill(0x3a2a10);
+      // Hanging hammer/tool: handle + head
+      g.rect(18, -22, 2, 12).fill(0x3a2a10);
+      g.rect(14, -24, 10, 4).fill(0x8a8480);
     }
   }
 
@@ -143,7 +163,9 @@ export class HiveView {
     const g = sprite.shadow;
     g.clear();
     // Sit just below the hive's footprint so it reads as a ground shadow.
-    const dy = sprite.type === 'forager' ? 24 : 9;
+    let dy = 24;
+    if (sprite.type === 'wax') dy = 9;
+    if (sprite.type === 'builder') dy = 12;
     g.ellipse(0, dy, 38, 6).fill({ color: 0x000000, alpha: 0.28 });
   }
 

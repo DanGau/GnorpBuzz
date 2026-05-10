@@ -59,7 +59,6 @@ export class Game {
     this.observer = new Observer();
     this.world = new World();
     this.renderer = new WorldRenderer({
-      onLaunchClick: () => this.launchVessel(),
       onHiveClick: (hiveId: string) => this.toggleHiveSelection(hiveId),
       onBackgroundClick: () => this.selectHive(null),
     });
@@ -235,6 +234,7 @@ export class Game {
       stepAndRender: (n: number) => this.stepAndRender(n),
       buyForagerBee: () => this.buyBee('forager'),
       buyWaxBee: () => this.buyBee('wax'),
+      buyBuilderBee: () => this.buyBee('builder'),
       launchVessel: () => this.launchVessel(),
       dismissJournal: () => this.dismissJournal(),
       resetGame: () => this.resetGame(),
