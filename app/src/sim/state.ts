@@ -16,6 +16,7 @@ export type HiveType = 'forager' | 'wax' | 'builder';
 export interface ForagerHiveData {
   id: string;
   type: 'forager';
+  built: boolean;
   bees: number;
   pollen: number;
 }
@@ -23,6 +24,7 @@ export interface ForagerHiveData {
 export interface WaxHiveData {
   id: string;
   type: 'wax';
+  built: boolean;
   bees: number;
   waxBlocks: number; // produced by wax-makers, drained by builders
 }
@@ -30,6 +32,7 @@ export interface WaxHiveData {
 export interface BuilderHiveData {
   id: string;
   type: 'builder';
+  built: boolean;
   bees: number;
 }
 
@@ -66,6 +69,11 @@ export const TUNING = {
   BEE_BASE_COST: 2,
   BEE_COST_GROWTH: 1.3,
 
+  // Building costs (one-shot to construct a hive). Forager Hive starts
+  // built; the others are unlocked by paying these costs.
+  WAX_HIVE_BUILD_COST: 8, // pollen
+  BUILDER_HIVE_BUILD_COST: 4, // wax
+
   VESSEL_BLOCKS_REQUIRED: 8,
   LAUNCH_DURATION_MS: 4000,
   CRASH_DURATION_MS: 2000,
@@ -98,9 +106,9 @@ export function createInitialState(): GameState {
     elapsedMs: 0,
     // Order matches the slot order in world/layout.ts.
     hives: [
-      { id: 'forager-hive', type: 'forager', bees: 0, pollen: 0 },
-      { id: 'builder-hive', type: 'builder', bees: 0 },
-      { id: 'wax-hive', type: 'wax', bees: 0, waxBlocks: 0 },
+      { id: 'forager-hive', type: 'forager', built: true, bees: 0, pollen: 0 },
+      { id: 'builder-hive', type: 'builder', built: false, bees: 0 },
+      { id: 'wax-hive', type: 'wax', built: false, bees: 0, waxBlocks: 0 },
     ],
     flowers,
     vessel: {
@@ -136,6 +144,17 @@ export function nextBeeCost(state: GameState, type: HiveType): number {
 // Builders are the late-stage role that delivers finished wax — paid in wax.
 export function costCurrency(type: HiveType): Currency {
   return type === 'builder' ? 'wax' : 'pollen';
+}
+
+// One-shot construction cost for an unbuilt hive. Forager Hive is always
+// built (starter), so this returns null for it.
+export function buildCost(
+  type: HiveType,
+): { amount: number; currency: Currency } | null {
+  if (type === 'wax') return { amount: TUNING.WAX_HIVE_BUILD_COST, currency: 'pollen' };
+  if (type === 'builder')
+    return { amount: TUNING.BUILDER_HIVE_BUILD_COST, currency: 'wax' };
+  return null;
 }
 
 export function totalBees(state: GameState): number {

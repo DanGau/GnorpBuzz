@@ -454,7 +454,7 @@ export class Bee {
     let best: { hiveId: string; x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (const h of state.hives) {
-      if (h.type !== 'forager') continue;
+      if (h.type !== 'forager' || !h.built) continue;
       if ((h as ForagerHiveData).pollen <= 0) continue;
       const pos = world.getHivePosition(h.id);
       if (!pos) continue;
@@ -576,7 +576,7 @@ export class Bee {
     let best: { hiveId: string; x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (const h of state.hives) {
-      if (h.type !== 'wax') continue;
+      if (h.type !== 'wax' || !h.built) continue;
       if ((h as WaxHiveData).waxBlocks <= 0) continue;
       const pos = world.getHivePosition(h.id);
       if (!pos) continue;

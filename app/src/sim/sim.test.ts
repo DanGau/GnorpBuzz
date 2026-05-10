@@ -58,8 +58,9 @@ describe('actions', () => {
     expect(getForagerHive(s).bees).toBe(1);
   });
 
-  it('first wax-maker bee is free', () => {
+  it('first wax-maker bee is free (after wax hive is built)', () => {
     const s = createInitialState();
+    getWaxHive(s).built = true; // skip the build step for unit testing
     expect(nextBeeCost(s, 'wax')).toBe(0);
     buyBee(s, 'wax');
     expect(getWaxHive(s).bees).toBe(1);
@@ -84,8 +85,9 @@ describe('actions', () => {
     expect(getForagerHive(s).pollen).toBe(100 - cost);
   });
 
-  it('builders cost wax', () => {
+  it('builders cost wax (after builder hive is built)', () => {
     const s = createInitialState();
+    getBuilderHive(s).built = true;
     buyBee(s, 'builder'); // free
     const fail = buyBee(s, 'builder');
     expect(fail.ok).toBe(false);
@@ -128,6 +130,7 @@ describe('actions', () => {
 
   it('buying a builder can drain the vessel pile and revert ready→building', () => {
     const s = createInitialState();
+    getBuilderHive(s).built = true;
     buyBee(s, 'builder'); // free
     s.vessel.deliveredBlocks = TUNING.VESSEL_BLOCKS_REQUIRED;
     vesselSystem(s);

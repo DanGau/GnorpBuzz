@@ -91,12 +91,22 @@ export class HiveView {
     for (const sprite of this.sprites.values()) {
       const simHive = state.hives.find((h) => h.id === sprite.id);
       if (!simHive) continue;
-      if (sprite.type === 'forager') {
-        this.drawPollenPots(sprite, (simHive as ForagerHiveData).pollen);
-      } else if (sprite.type === 'wax') {
-        this.drawBlockStockpile(sprite, (simHive as WaxHiveData).waxBlocks);
+
+      // Unbuilt hives render as a faded "ghost" of the building on a
+      // construction-site foundation. Resource visuals are skipped.
+      const built = simHive.built;
+      sprite.body.alpha = built ? 1 : 0.32;
+      sprite.shadow.alpha = built ? 1 : 0.4;
+      sprite.pollenPots.alpha = built ? 1 : 0;
+      sprite.blockStockpile.alpha = built ? 1 : 0;
+
+      if (built) {
+        if (sprite.type === 'forager') {
+          this.drawPollenPots(sprite, (simHive as ForagerHiveData).pollen);
+        } else if (sprite.type === 'wax') {
+          this.drawBlockStockpile(sprite, (simHive as WaxHiveData).waxBlocks);
+        }
       }
-      // Builder hive has no per-hive resource to render.
       this.drawHighlight(sprite, sprite.id === selectedHiveId);
     }
   }

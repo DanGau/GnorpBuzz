@@ -5,6 +5,7 @@ import {
   totalPollen,
   spendableWax,
   getWaxHive,
+  buildCost,
 } from './state';
 
 export interface ActionResult {
@@ -17,6 +18,9 @@ export interface ActionResult {
 //   builder             → wax
 // First bee of each type is free.
 export function buyBee(state: GameState, type: HiveType): ActionResult {
+  const hive = state.hives.find((h) => h.type === type);
+  if (!hive) return { ok: false, reason: `No ${type} hive` };
+  if (!hive.built) return { ok: false, reason: `${type} hive not built yet` };
   const cost = nextBeeCost(state, type);
   const currency = costCurrency(type);
 
@@ -62,8 +66,55 @@ export function buyBee(state: GameState, type: HiveType): ActionResult {
     }
   }
 
+  hive.bees += 1;
+  return { ok: true };
+}
+
+// Construct an unbuilt hive. Pays a one-shot cost in the appropriate
+// currency (wax hive → pollen, builder hive → wax).
+export function buildHive(state: GameState, type: HiveType): ActionResult {
   const hive = state.hives.find((h) => h.type === type);
-  if (hive) hive.bees += 1;
+  if (!hive) return { ok: false, reason: `No ${type} hive` };
+  if (hive.built) return { ok: false, reason: `${type} hive already built` };
+  const cost = buildCost(type);
+  if (!cost) return { ok: false, reason: `${type} hive cannot be built (starter)` };
+
+  if (cost.currency === 'pollen') {
+    if (totalPollen(state) < cost.amount) {
+      return { ok: false, reason: `Need ${cost.amount} pollen` };
+    }
+    let remaining = cost.amount;
+    const foragerHives = state.hives
+      .filter((h): h is ForagerHiveData => h.type === 'forager')
+      .sort((a, b) => b.pollen - a.pollen);
+    for (const h of foragerHives) {
+      if (remaining <= 0) break;
+      const take = Math.min(h.pollen, remaining);
+      h.pollen -= take;
+      remaining -= take;
+    }
+  } else {
+    if (spendableWax(state) < cost.amount) {
+      return { ok: false, reason: `Need ${cost.amount} wax` };
+    }
+    let remaining = cost.amount;
+    const waxHive = getWaxHive(state);
+    const fromHive = Math.min(waxHive.waxBlocks, remaining);
+    waxHive.waxBlocks -= fromHive;
+    remaining -= fromHive;
+    if (remaining > 0) {
+      const fromVessel = Math.min(state.vessel.deliveredBlocks, remaining);
+      state.vessel.deliveredBlocks -= fromVessel;
+      remaining -= fromVessel;
+      if (
+        state.vessel.phase === 'ready' &&
+        state.vessel.deliveredBlocks < state.vessel.requiredBlocks
+      ) {
+        state.vessel.phase = 'building';
+      }
+    }
+  }
+  hive.built = true;
   return { ok: true };
 }
 
