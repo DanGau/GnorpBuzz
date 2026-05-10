@@ -1,6 +1,7 @@
 import type { GameState } from '../sim/state';
 import { HiveEntity } from './HiveEntity';
 import { FlowerEntity } from './FlowerEntity';
+import { ParticleSystem } from './ParticleSystem';
 import { WORLD, hiveSlotPosition } from './layout';
 
 // The world holds positioned, animated entities mirroring sim state.
@@ -11,10 +12,12 @@ import { WORLD, hiveSlotPosition } from './layout';
 export class World {
   hives: Map<string, HiveEntity>;
   flowers: Map<string, FlowerEntity>;
+  particles: ParticleSystem;
 
   constructor() {
     this.hives = new Map();
     this.flowers = new Map();
+    this.particles = new ParticleSystem();
   }
 
   reconcile(state: GameState): void {
@@ -48,6 +51,7 @@ export class World {
     for (const hive of this.hives.values()) {
       for (const bee of hive.bees) bee.update(dtMs, state, this);
     }
+    this.particles.update(dtMs);
   }
 
   getHivePosition(hiveId: string): { x: number; y: number } | null {

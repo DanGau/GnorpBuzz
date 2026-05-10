@@ -32,6 +32,8 @@ export class Bee {
   homeHiveId: string;
   x: number;
   y: number;
+  prevX: number;
+  prevY: number;
   targetX: number;
   targetY: number;
   state: BeeState;
@@ -41,6 +43,16 @@ export class Bee {
   targetHiveId: string | null;
   flapPhase: number;
   idleWaitMs: number;
+  // Per-bee random factor in [-1, 1] used to desync timing/wobble across the
+  // colony so identical sprites don't move in lockstep.
+  seed: number;
+  // Visual reaction frame: when set in the future, BeeView applies a brief
+  // body-shake (squash/stretch) until elapsedMs catches up.
+  shakeUntilMs: number;
+  // Per-frame steam emission gate (used by wax-makers in producing-wax).
+  steamCooldownMs: number;
+  // Used by foragers to drop a sloppy pollen trail home.
+  trailCooldownMs: number;
 
   constructor(role: BeeRole, homeHiveId: string, homeX: number, homeY: number) {
     this.id = `bee-${beeIdSeq++}`;
@@ -48,6 +60,8 @@ export class Bee {
     this.homeHiveId = homeHiveId;
     this.x = homeX + (Math.random() - 0.5) * 20;
     this.y = homeY + (Math.random() - 0.5) * 20;
+    this.prevX = this.x;
+    this.prevY = this.y;
     this.targetX = homeX;
     this.targetY = homeY;
     this.state = 'idle';
@@ -57,14 +71,22 @@ export class Bee {
     this.targetHiveId = null;
     this.flapPhase = Math.random() * Math.PI * 2;
     this.idleWaitMs = 0;
+    this.seed = Math.random() * 2 - 1;
+    this.shakeUntilMs = 0;
+    this.steamCooldownMs = 0;
+    this.trailCooldownMs = 0;
   }
 
   private flyToward(dtMs: number): boolean {
+    this.prevX = this.x;
+    this.prevY = this.y;
     const dx = this.targetX - this.x;
     const dy = this.targetY - this.y;
     const dist = Math.hypot(dx, dy);
     if (dist < ARRIVE_THRESHOLD) return true;
-    const move = TUNING.BEE_SPEED * (dtMs / 1000);
+    // Per-bee speed jitter (±15%) keeps the swarm from moving in lockstep.
+    const speed = TUNING.BEE_SPEED * (1 + this.seed * 0.15);
+    const move = speed * (dtMs / 1000);
     if (move >= dist) {
       this.x = this.targetX;
       this.y = this.targetY;
@@ -73,6 +95,11 @@ export class Bee {
     this.x += (dx / dist) * move;
     this.y += (dy / dist) * move;
     return false;
+  }
+
+  /** Mark a brief reaction shake. View applies extra squash for ~100ms. */
+  private pulseShake(state: GameState, durationMs = 120): void {
+    this.shakeUntilMs = state.elapsedMs + durationMs;
   }
 
   private homePos(world: World): { x: number; y: number } {
@@ -119,6 +146,9 @@ export class Bee {
           } else {
             this.state = 'harvesting';
             this.workTimer = TUNING.HARVEST_DURATION_MS;
+            // Bee bumps the flower — squash + tiny pollen puff.
+            this.pulseShake(state);
+            world.particles.emit('pollenPuff', this.x, this.y, 2);
           }
         }
         break;
@@ -133,6 +163,8 @@ export class Bee {
             if (flower.yieldRemaining === 0) {
               flower.regrowTimerMs = TUNING.FLOWER_REGROW_MS;
             }
+            // Sparkle on a successful harvest.
+            world.particles.emit('sparkle', this.x, this.y - 4, 1);
           }
           this.targetFlowerId = null;
           this.carrying = 'pollen';
@@ -140,15 +172,25 @@ export class Bee {
           this.targetX = home.x;
           this.targetY = home.y - 10;
           this.state = 'flying-home-with-pollen';
+          this.trailCooldownMs = 0;
         }
         break;
       }
       case 'flying-home-with-pollen': {
+        // Sloppy carry: drop a pollen-trail particle every ~600ms.
+        this.trailCooldownMs -= dtMs;
+        if (this.trailCooldownMs <= 0) {
+          world.particles.emit('pollenPuff', this.x, this.y + 3, 1);
+          this.trailCooldownMs = 600 + Math.random() * 200;
+        }
         if (this.flyToward(dtMs)) {
           const hive = state.hives.find((h) => h.id === this.homeHiveId);
           if (hive && hive.type === 'forager') {
             (hive as ForagerHiveData).pollen += 1;
           }
+          // Toss-overhead deposit: fan of pollen particles.
+          world.particles.emit('pollenPuff', this.x, this.y, 6);
+          this.pulseShake(state);
           this.carrying = 'none';
           this.state = 'idle';
           this.idleWaitMs = 0;
@@ -241,6 +283,9 @@ export class Bee {
             this.targetX = home.x;
             this.targetY = home.y - 10;
             this.state = 'flying-home-with-pollen';
+            // "Hup!" body-shake on pickup + small puff
+            this.pulseShake(state);
+            world.particles.emit('pollenPuff', this.x, this.y, 2);
           } else {
             this.returnToIdle(world);
           }
@@ -251,6 +296,8 @@ export class Bee {
         if (this.flyToward(dtMs)) {
           this.state = 'producing-wax';
           this.workTimer = TUNING.PRODUCE_DURATION_MS;
+          this.steamCooldownMs = 0;
+          this.pulseShake(state);
         }
         break;
       }
@@ -259,12 +306,21 @@ export class Bee {
         // Tiny visual wiggle while producing — bee jiggles in place
         this.x = this.targetX + Math.sin(this.workTimer / 100) * 2;
         this.y = this.targetY + Math.cos(this.workTimer / 90) * 2;
+        // Continuous steam puff every ~140ms while producing.
+        this.steamCooldownMs -= dtMs;
+        if (this.steamCooldownMs <= 0) {
+          const home = world.getHivePosition(this.homeHiveId);
+          if (home) world.particles.emit('waxSteam', home.x + 17, home.y - 60, 1);
+          this.steamCooldownMs = 140 + Math.random() * 80;
+        }
         if (this.workTimer <= 0) {
-          // Deposit the freshly-made block at the home stockpile.
           const home = state.hives.find((h) => h.id === this.homeHiveId);
           if (home && home.type === 'wax') {
             (home as WaxHiveData).waxBlocks += 1;
           }
+          // Sparkle pop when the block lands in the stockpile.
+          world.particles.emit('sparkle', this.x, this.y, 1);
+          this.pulseShake(state, 160);
           this.carrying = 'none';
           this.state = 'idle';
           this.idleWaitMs = 0;
@@ -350,6 +406,8 @@ export class Bee {
             this.targetX = WORLD.VESSEL_PAD.x;
             this.targetY = WORLD.VESSEL_PAD.y - 30;
             this.state = 'flying-to-vessel';
+            this.pulseShake(state);
+            world.particles.emit('crashDust', this.x, this.y + 4, 2);
           } else {
             this.returnToIdle(world);
           }
@@ -369,11 +427,13 @@ export class Bee {
           if (state.vessel.phase === 'building') {
             state.vessel.deliveredBlocks += 1;
           } else {
-            // Vessel switched away from 'building' mid-trip — return the
-            // block to a wax hive's stockpile instead of losing it.
             const wax = state.hives.find((h) => h.type === 'wax');
             if (wax && wax.type === 'wax') (wax as WaxHiveData).waxBlocks += 1;
           }
+          // Snap-place: dust puff + satisfied body-shake on the builder.
+          world.particles.emit('crashDust', WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y + 8, 4);
+          world.particles.emit('sparkle', WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y, 1);
+          this.pulseShake(state, 200);
           this.carrying = 'none';
           const home = this.homePos(world);
           this.targetX = home.x;

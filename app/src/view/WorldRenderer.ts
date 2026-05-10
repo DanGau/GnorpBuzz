@@ -7,6 +7,7 @@ import { FlowerView } from './FlowerView';
 import { HiveView } from './HiveView';
 import { BeeView } from './BeeView';
 import { VesselView } from './VesselView';
+import { ParticleView } from './ParticleView';
 
 export interface WorldRendererCallbacks {
   onHiveClick: (hiveId: string) => void;
@@ -21,6 +22,7 @@ export class WorldRenderer {
   private hiveView: HiveView;
   private beeView: BeeView;
   private vesselView: VesselView;
+  private particleView: ParticleView;
   private fitListeners: (() => void)[] = [];
 
   constructor(callbacks: WorldRendererCallbacks) {
@@ -31,12 +33,15 @@ export class WorldRenderer {
     this.hiveView = new HiveView(callbacks.onHiveClick);
     this.beeView = new BeeView();
     this.vesselView = new VesselView(callbacks.onVesselClick);
+    this.particleView = new ParticleView();
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
     this.root.addChild(this.vesselView.container);
     this.root.addChild(this.hiveView.container);
     this.root.addChild(this.beeView.container);
+    // Particles render on top so they're visible over hives/bees.
+    this.root.addChild(this.particleView.container);
 
     // Background click (anything not consumed by hive/airplane): deselect.
     this.worldView.container.eventMode = 'static';
@@ -86,7 +91,8 @@ export class WorldRenderer {
   update(state: GameState, world: World, dtMs: number, selectedId: string | null): void {
     this.flowerView.update(state, world, dtMs);
     this.hiveView.update(state, world, selectedId, dtMs);
-    this.beeView.update(world);
+    this.beeView.update(world, state.elapsedMs);
     this.vesselView.update(state, dtMs, selectedId === 'vessel');
+    this.particleView.update(world.particles);
   }
 }
