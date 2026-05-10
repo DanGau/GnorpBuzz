@@ -11,12 +11,13 @@ export class UI {
   private widgets: { update(): void }[];
   private hivePanels: HiveControlPanel[];
   private launchButton: LaunchButton;
+  private vesselProgress: VesselProgress;
   private game: Game;
 
   constructor(game: Game, mount: HTMLElement) {
     this.game = game;
     const resourceBar = new ResourceBar(game);
-    const vesselProgress = new VesselProgress(game);
+    this.vesselProgress = new VesselProgress(game);
     const journal = new JournalModal(game);
     const endBanner = new EndBanner(game);
 
@@ -55,8 +56,8 @@ export class UI {
     mount.appendChild(foragerPanel.el);
     mount.appendChild(builderPanel.el);
     mount.appendChild(waxPanel.el);
+    mount.appendChild(this.vesselProgress.el);
     mount.appendChild(this.launchButton.el);
-    mount.appendChild(vesselProgress.el);
     mount.appendChild(journal.el);
     mount.appendChild(endBanner.el);
 
@@ -67,7 +68,7 @@ export class UI {
       builderPanel,
       waxPanel,
       this.launchButton,
-      vesselProgress,
+      this.vesselProgress,
       journal,
       endBanner,
     ];
@@ -93,6 +94,13 @@ export class UI {
       this.game.app,
     );
     this.launchButton.reposition(launch.x, launch.y);
+    // Vessel progress panel sits above the airplane (selection-gated).
+    const vesselAbove = this.game.renderer.worldToScreen(
+      WORLD.VESSEL_PAD.x,
+      WORLD.VESSEL_PAD.y - 36,
+      this.game.app,
+    );
+    this.vesselProgress.reposition(vesselAbove.x, vesselAbove.y);
   }
 
   update(): void {

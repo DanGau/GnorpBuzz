@@ -11,26 +11,46 @@ export class VesselView {
   private pile: Graphics;
   private airplane: Graphics;
   private hint: Graphics;
+  private highlight: Graphics;
+  private hitArea: Graphics;
   private pulse = 0;
+  private onSelect: () => void;
 
-  constructor() {
+  constructor(onSelect: () => void) {
+    this.onSelect = onSelect;
     this.container = new Container();
+    this.highlight = new Graphics();
     this.pile = new Graphics();
     this.airplane = new Graphics();
     this.hint = new Graphics();
-    this.container.addChild(this.pile);
+    this.hitArea = new Graphics();
+
+    // Z-order: highlight halo → glow hint → pile / airplane → invisible hit area on top.
+    this.container.addChild(this.highlight);
     this.container.addChild(this.hint);
+    this.container.addChild(this.pile);
     this.container.addChild(this.airplane);
+    this.container.addChild(this.hitArea);
+
+    this.hitArea.eventMode = 'static';
+    this.hitArea.cursor = 'pointer';
+    this.hitArea.on('pointertap', (e) => {
+      e.stopPropagation();
+      this.onSelect();
+    });
   }
 
-  update(state: GameState, dtMs: number): void {
+  update(state: GameState, dtMs: number, selected: boolean): void {
     this.pulse += dtMs / 1000;
     this.pile.clear();
     this.airplane.clear();
     this.hint.clear();
+    this.highlight.clear();
+    this.hitArea.clear();
 
     const v = state.vessel;
     if (v.phase === 'reviewed') {
+      this.hitArea.eventMode = 'none';
       return;
     }
 
@@ -41,6 +61,8 @@ export class VesselView {
       this.airplane.x = PAD.x;
       this.airplane.y = PAD.y;
       this.airplane.rotation = 0;
+      this.drawSelectionHalo(selected);
+      this.drawHitArea();
       return;
     }
 
@@ -52,8 +74,13 @@ export class VesselView {
       this.airplane.x = PAD.x;
       this.airplane.y = PAD.y - 4;
       this.airplane.rotation = -0.08;
+      this.drawSelectionHalo(selected);
+      this.drawHitArea();
       return;
     }
+
+    // In flight or crashed — no selection, no hit area.
+    this.hitArea.eventMode = 'none';
 
     let x = PAD.x;
     let y = PAD.y;
@@ -80,6 +107,25 @@ export class VesselView {
     this.airplane.x = x;
     this.airplane.y = y;
     this.airplane.rotation = rotation;
+  }
+
+  private drawSelectionHalo(selected: boolean): void {
+    if (!selected) return;
+    const breath = 1 + Math.sin(this.pulse * 3) * 0.08;
+    this.highlight
+      .circle(PAD.x, PAD.y - 2, 60 * breath)
+      .fill({ color: 0xfff2cf, alpha: 0.22 });
+    this.highlight
+      .circle(PAD.x, PAD.y - 2, 44 * breath)
+      .fill({ color: 0xffe680, alpha: 0.18 });
+  }
+
+  private drawHitArea(): void {
+    this.hitArea.eventMode = 'static';
+    // Generous box around the vessel pad / airplane.
+    this.hitArea
+      .roundRect(PAD.x - 60, PAD.y - 40, 120, 80, 10)
+      .fill({ color: 0xffffff, alpha: 0.001 });
   }
 
   private drawPile(delivered: number, required: number): void {

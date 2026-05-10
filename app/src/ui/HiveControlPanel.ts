@@ -78,7 +78,7 @@ export class HiveControlPanel {
     this.costEl.textContent = cost === 0 ? 'FREE' : `${cost} wax`;
     this.button.disabled = cost > 0 && spendableWax(this.game.state) < cost;
 
-    const visible = this.game.selectedHiveId === this.hiveId;
+    const visible = this.game.selectedId === this.hiveId;
     this.el.classList.toggle('hidden', !visible);
   }
 

@@ -10,6 +10,7 @@ import { VesselView } from './VesselView';
 
 export interface WorldRendererCallbacks {
   onHiveClick: (hiveId: string) => void;
+  onVesselClick: () => void;
   onBackgroundClick: () => void;
 }
 
@@ -29,7 +30,7 @@ export class WorldRenderer {
     this.flowerView = new FlowerView();
     this.hiveView = new HiveView(callbacks.onHiveClick);
     this.beeView = new BeeView();
-    this.vesselView = new VesselView();
+    this.vesselView = new VesselView(callbacks.onVesselClick);
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
@@ -82,10 +83,10 @@ export class WorldRenderer {
     this.fitListeners.push(cb);
   }
 
-  update(state: GameState, world: World, dtMs: number, selectedHiveId: string | null): void {
+  update(state: GameState, world: World, dtMs: number, selectedId: string | null): void {
     this.flowerView.update(state, world, dtMs);
-    this.hiveView.update(state, world, selectedHiveId, dtMs);
+    this.hiveView.update(state, world, selectedId, dtMs);
     this.beeView.update(world);
-    this.vesselView.update(state, dtMs);
+    this.vesselView.update(state, dtMs, selectedId === 'vessel');
   }
 }
