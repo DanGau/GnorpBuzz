@@ -47,6 +47,7 @@ session-end if game files were edited without build + screenshot evidence.
 - `docs/mvp-scope.md` — minimum slice we're actually building first
 - `docs/architecture.md` — engine layers, object responsibilities, file layout
 - `docs/agent-behavior.md` — Phase 1 agent-based production model (bee state machines, resource chain)
+- `docs/motion-and-whimsy.md` — animation guidelines, easing presets, role personality, absurdist gag list
 
 Read `docs/agent-first/principles.md` for the philosophy this repo is built on, and
 `docs/game-design.md` for what we're actually building.
