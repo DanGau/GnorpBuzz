@@ -1,7 +1,9 @@
 import type { Game } from '../game/Game';
 import {
   nextBeeCost,
+  costCurrency,
   spendableWax,
+  totalPollen,
   getForagerHive,
   getWaxHive,
   getBuilderHive,
@@ -68,6 +70,7 @@ export class HiveControlPanel {
 
   update(): void {
     const cost = nextBeeCost(this.game.state, this.type);
+    const currency = costCurrency(this.type);
     const hive =
       this.type === 'forager'
         ? getForagerHive(this.game.state)
@@ -75,8 +78,10 @@ export class HiveControlPanel {
           ? getWaxHive(this.game.state)
           : getBuilderHive(this.game.state);
     this.headerCount.textContent = hive.bees.toString();
-    this.costEl.textContent = cost === 0 ? 'FREE' : `${cost} wax`;
-    this.button.disabled = cost > 0 && spendableWax(this.game.state) < cost;
+    this.costEl.textContent = cost === 0 ? 'FREE' : `${cost} ${currency}`;
+    const available =
+      currency === 'pollen' ? totalPollen(this.game.state) : spendableWax(this.game.state);
+    this.button.disabled = cost > 0 && available < cost;
 
     const visible = this.game.selectedId === this.hiveId;
     this.el.classList.toggle('hidden', !visible);

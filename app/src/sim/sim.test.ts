@@ -65,12 +65,34 @@ describe('actions', () => {
     expect(getWaxHive(s).bees).toBe(1);
   });
 
-  it('subsequent bees cost wax and fail without it', () => {
+  it('subsequent foragers cost pollen and fail without it', () => {
     const s = createInitialState();
     buyBee(s, 'forager'); // free
     expect(nextBeeCost(s, 'forager')).toBeGreaterThan(0);
     const result = buyBee(s, 'forager');
     expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/pollen/);
+  });
+
+  it('subsequent foragers can be bought with pollen', () => {
+    const s = createInitialState();
+    buyBee(s, 'forager'); // free, count = 1
+    getForagerHive(s).pollen = 100;
+    const cost = nextBeeCost(s, 'forager');
+    const result = buyBee(s, 'forager');
+    expect(result.ok).toBe(true);
+    expect(getForagerHive(s).pollen).toBe(100 - cost);
+  });
+
+  it('builders cost wax', () => {
+    const s = createInitialState();
+    buyBee(s, 'builder'); // free
+    const fail = buyBee(s, 'builder');
+    expect(fail.ok).toBe(false);
+    expect(fail.reason).toMatch(/wax/);
+    s.vessel.deliveredBlocks = 100;
+    const ok = buyBee(s, 'builder');
+    expect(ok.ok).toBe(true);
   });
 
   it('bee cost grows with each purchase', () => {
@@ -104,14 +126,13 @@ describe('actions', () => {
     expect(s.vessel.phase).toBe('launching');
   });
 
-  it('buying a bee can drain the vessel pile and revert ready→building', () => {
+  it('buying a builder can drain the vessel pile and revert ready→building', () => {
     const s = createInitialState();
-    buyBee(s, 'forager'); // free
+    buyBee(s, 'builder'); // free
     s.vessel.deliveredBlocks = TUNING.VESSEL_BLOCKS_REQUIRED;
     vesselSystem(s);
     expect(s.vessel.phase).toBe('ready');
-    // Forager has 1 bee, next costs > 0
-    const result = buyBee(s, 'forager');
+    const result = buyBee(s, 'builder');
     expect(result.ok).toBe(true);
     expect(s.vessel.deliveredBlocks).toBeLessThan(TUNING.VESSEL_BLOCKS_REQUIRED);
     expect(s.vessel.phase).toBe('building');

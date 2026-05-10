@@ -2,6 +2,8 @@
 // Three buildings: Forager Hive, Wax Hive, Builder Hive (fixed structures).
 // Player buys individual worker bees. Vessel waits for a click to launch.
 
+export type Currency = 'pollen' | 'wax';
+
 export type VesselPhase =
   | 'building'
   | 'ready'
@@ -128,6 +130,12 @@ export function nextBeeCost(state: GameState, type: HiveType): number {
   const n = hive?.bees ?? 0;
   if (n === 0) return 0;
   return Math.ceil(TUNING.BEE_BASE_COST * Math.pow(TUNING.BEE_COST_GROWTH, n - 1));
+}
+
+// Foragers and wax-makers are the production-side roles — paid in raw pollen.
+// Builders are the late-stage role that delivers finished wax — paid in wax.
+export function costCurrency(type: HiveType): Currency {
+  return type === 'builder' ? 'wax' : 'pollen';
 }
 
 export function totalBees(state: GameState): number {
