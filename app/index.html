@@ -21,20 +21,82 @@
       }
       .resource-bar .icon { font-size: 22px; }
 
-      .buy-panel {
-        position: absolute; top: 16px; right: 16px;
-        background: rgba(20, 14, 6, 0.7); padding: 12px;
-        border-radius: 8px; backdrop-filter: blur(4px);
-        min-width: 180px;
+      /* Per-hive control panel anchored above each hive in world space.
+         Header is always visible; body collapses smoothly on click. */
+      .hive-control {
+        position: absolute;
+        transform: translate(-50%, -100%);
+        background: rgba(20, 14, 6, 0.78);
+        border-radius: 10px;
+        backdrop-filter: blur(4px);
+        min-width: 160px;
+        max-width: 200px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        margin-top: -8px;
+        overflow: hidden;
+        transition: box-shadow 200ms ease;
       }
-      .buy-panel button {
-        width: 100%; margin-top: 6px; padding: 8px 12px;
+      .hive-control:hover { box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5); }
+      .hive-control .header {
+        all: unset;
+        display: flex; align-items: center; gap: 8px;
+        width: 100%; box-sizing: border-box;
+        padding: 8px 12px;
+        cursor: pointer;
+        color: #f0e9d2;
+        font-size: 13px; font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .hive-control .header:hover { background: rgba(255, 220, 100, 0.06); }
+      .hive-control .header .title { flex: 1; }
+      .hive-control .header .count-badge {
+        background: rgba(245, 209, 102, 0.2);
+        color: #f5d166;
+        padding: 2px 8px; border-radius: 999px;
+        font-size: 12px; font-weight: 700;
+        min-width: 18px; text-align: center;
+      }
+      .hive-control .header .chevron {
+        color: #b9a466; font-size: 11px;
+        transition: transform 200ms ease;
+      }
+      .hive-control.collapsed .header .chevron { transform: rotate(-90deg); }
+      .hive-control .body {
+        padding: 0 12px 10px;
+        max-height: 100px;
+        opacity: 1;
+        transition: max-height 220ms ease, opacity 180ms ease, padding 220ms ease;
+        overflow: hidden;
+      }
+      .hive-control.collapsed .body {
+        max-height: 0;
+        opacity: 0;
+        padding-top: 0; padding-bottom: 0;
+      }
+      .hive-control .cost-row {
+        font-size: 12px; color: #cfc6a8;
+        margin-bottom: 6px;
+      }
+      .hive-control .cost-row .cost-num { color: #f5d166; font-weight: 600; }
+      .hive-control .build {
+        all: unset;
+        display: block; width: 100%;
+        box-sizing: border-box;
+        padding: 7px 10px;
         background: #d49a36; color: #2a1f0a; font-weight: 600;
-        border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
+        border-radius: 6px; cursor: pointer; font-size: 13px;
+        text-align: center;
+        transition: background 120ms ease;
       }
-      .buy-panel button:disabled { background: #5a4a30; color: #8a7a55; cursor: not-allowed; }
-      .buy-panel .label { font-size: 12px; opacity: 0.8; margin-bottom: 2px; }
-      .buy-panel .cost { font-size: 14px; }
+      .hive-control .build:hover:not(:disabled) { background: #e8b04c; }
+      .hive-control .build:disabled {
+        background: #5a4a30; color: #8a7a55; cursor: not-allowed;
+      }
+      /* Subtle role-tinted accents */
+      .hive-control.hive-forager .header .count-badge { background: rgba(245, 209, 102, 0.25); }
+      .hive-control.hive-wax .header .count-badge {
+        background: rgba(212, 168, 106, 0.25); color: #d4a86a;
+      }
 
       .vessel-progress {
         position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);

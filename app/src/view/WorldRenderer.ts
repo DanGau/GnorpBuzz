@@ -19,6 +19,7 @@ export class WorldRenderer {
   private hiveView: HiveView;
   private beeView: BeeView;
   private vesselView: VesselView;
+  private fitListeners: (() => void)[] = [];
 
   constructor(callbacks: WorldRendererCallbacks) {
     this.root = new Container();
@@ -50,6 +51,20 @@ export class WorldRenderer {
     this.root.scale.set(s);
     this.root.x = (app.renderer.width - WORLD.WIDTH * s) / 2;
     this.root.y = (app.renderer.height - WORLD.HEIGHT * s) / 2;
+    for (const cb of this.fitListeners) cb();
+  }
+
+  /** Convert world coordinates into CSS pixel coordinates for the canvas. */
+  worldToScreen(worldX: number, worldY: number, app: Application): { x: number; y: number } {
+    const dpr = app.renderer.resolution || 1;
+    return {
+      x: (this.root.x + worldX * this.root.scale.x) / dpr,
+      y: (this.root.y + worldY * this.root.scale.y) / dpr,
+    };
+  }
+
+  onFit(cb: () => void): void {
+    this.fitListeners.push(cb);
   }
 
   update(state: GameState, world: World, dtMs: number): void {
