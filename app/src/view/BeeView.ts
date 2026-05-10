@@ -56,7 +56,7 @@ export class BeeView {
       const flightDist = Math.hypot(startDx, startDy);
       let arcOffsetX = 0;
       let arcOffsetY = 0;
-      if (flightDist > 30 && bee.windupRemainingMs <= 0) {
+      if (flightDist > 8 && bee.windupRemainingMs <= 0) {
         const traveled = Math.hypot(bee.x - bee.flightStartX, bee.y - bee.flightStartY);
         const progress = Math.min(1, traveled / flightDist);
         // Multi-bow path: bee weaves across the travel line N times where
@@ -66,10 +66,14 @@ export class BeeView {
         const inner = Math.sin(progress * Math.PI * numBows);
         const envelope = Math.sin(progress * Math.PI);
         const bow = inner * envelope;
-        // Per-role amplitude (3× the previous values).
+        // Per-role amplitude.
         const roleAmp =
           bee.role === 'forager' ? 84 : bee.role === 'wax-maker' ? 54 : 36;
-        const arcAmp = roleAmp * (1 + bee.seed * 0.3);
+        // Distance scaling: short trips arc less. Linear ramp from 0 to
+        // full amplitude over 0–250px so 30px wanders barely curve while
+        // 800px flights get the full swoop.
+        const distFactor = Math.min(1, flightDist / 250);
+        const arcAmp = roleAmp * (1 + bee.seed * 0.3) * distFactor;
         // Per-bee sign for which side the first bow goes.
         const arcSign = bee.seed >= 0 ? 1 : -1;
         const perpX = -startDy / flightDist;
