@@ -7,7 +7,8 @@ export type ParticleType =
   | 'sparkle'
   | 'waxSteam'
   | 'crashDust'
-  | 'oof';
+  | 'oof'
+  | 'huh';
 
 export interface Particle {
   type: ParticleType;
@@ -104,10 +105,11 @@ export class ParticleSystem {
         p.size = 1 + Math.random() * 1.5;
         break;
       }
-      case 'oof': {
+      case 'oof':
+      case 'huh': {
         p.vx = 0;
         p.vy = -30;
-        p.lifetimeMs = 700;
+        p.lifetimeMs = 800;
         p.rotationSpeed = 0;
         p.size = 1;
         break;

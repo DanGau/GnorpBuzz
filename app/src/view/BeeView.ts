@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import type { World } from '../world/World';
 import type { Bee } from '../world/Bee';
+import { TIP_DURATION_MS } from '../world/Bee';
 
 interface BeeSprite {
   bee: Bee;
@@ -75,8 +76,37 @@ export class BeeView {
         shake = 1 + 0.35 * t;
       }
 
-      sprite.graphics.rotation = 0;
-      sprite.graphics.scale.set((1 + stretchX) * shake, (1 + stretchY) * flap);
+      // Wind-up: brief vertical compression and a tiny lean while the bee
+      // backs away from its target before launching.
+      let windupSquash = 1;
+      if (bee.windupRemainingMs > 0) {
+        windupSquash = 1.18; // squat
+      }
+
+      // Tip-over animation: brief lean-and-snap while idle (~700ms total).
+      // 0–280ms: lean forward to ~15°.
+      // 280–360ms: snap back to -3° (overshoot).
+      // 360–700ms: settle to 0°.
+      let tipRotation = 0;
+      if (bee.tipPhaseMs > 0) {
+        const remaining = bee.tipPhaseMs;
+        const elapsed = TIP_DURATION_MS - remaining;
+        if (elapsed < 280) {
+          tipRotation = (elapsed / 280) * 0.26; // lean forward
+        } else if (elapsed < 360) {
+          const t = (elapsed - 280) / 80;
+          tipRotation = 0.26 + (-0.05 - 0.26) * t; // snap back overshoot
+        } else {
+          const t = (elapsed - 360) / (TIP_DURATION_MS - 360);
+          tipRotation = -0.05 * (1 - t); // settle to 0
+        }
+      }
+
+      sprite.graphics.rotation = tipRotation;
+      sprite.graphics.scale.set(
+        (1 + stretchX) * shake,
+        (1 + stretchY) * flap * windupSquash,
+      );
       sprite.carry.rotation = 0;
       sprite.carry.scale.set(1, 1);
 

@@ -80,5 +80,14 @@ function drawParticle(g: Graphics, p: Particle, lifeFrac: number): void {
       g.circle(0, 4, 1.6).fill(0xffe680);
       break;
     }
+    case 'huh': {
+      // Lightweight "?" — top arc, vertical, dot below.
+      // Stroked curve approximated with two arcs.
+      g.arc(0, -4, 4, Math.PI * 1.1, Math.PI * 0.4, false)
+        .stroke({ color: 0xffe680, width: 2 });
+      g.rect(-1, 0, 2, 4).fill(0xffe680);
+      g.circle(0, 6, 1.6).fill(0xffe680);
+      break;
+    }
   }
 }

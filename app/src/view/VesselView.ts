@@ -2,9 +2,11 @@ import { Container, Graphics } from 'pixi.js';
 import type { GameState } from '../sim/state';
 import { TUNING } from '../sim/state';
 import { WORLD } from '../world/layout';
+import type { World } from '../world/World';
 
 const PAD = WORLD.VESSEL_PAD;
 const APEX_Y = 200;
+const SHUDDER_MS = 350;
 
 export class VesselView {
   readonly container: Container;
@@ -40,7 +42,9 @@ export class VesselView {
     });
   }
 
-  update(state: GameState, dtMs: number, selected: boolean): void {
+  private dustCooldownMs = 0;
+
+  update(state: GameState, dtMs: number, selected: boolean, world?: World): void {
     this.pulse += dtMs / 1000;
     this.pile.clear();
     this.airplane.clear();
@@ -88,10 +92,31 @@ export class VesselView {
     let scale = 1;
 
     if (v.phase === 'launching') {
-      const t = Math.min(1, v.launchTimer / TUNING.LAUNCH_DURATION_MS);
-      const eased = 1 - Math.pow(1 - t, 2);
-      y = PAD.y + (APEX_Y - PAD.y) * eased;
-      rotation = -0.3 + Math.sin(t * 6) * 0.05;
+      if (v.launchTimer < SHUDDER_MS) {
+        // Pre-launch shudder: stay on the pad, jitter horizontally, kick up dust.
+        const shake = Math.sin(v.launchTimer * 0.08) * 4;
+        x = PAD.x + shake;
+        y = PAD.y - 4;
+        rotation = -0.08 + Math.sin(v.launchTimer * 0.06) * 0.04;
+        this.dustCooldownMs -= dtMs;
+        if (this.dustCooldownMs <= 0 && world) {
+          world.particles.emit('crashDust', PAD.x, PAD.y + 12, 3);
+          this.dustCooldownMs = 60;
+        }
+      } else {
+        const t = Math.min(
+          1,
+          (v.launchTimer - SHUDDER_MS) / (TUNING.LAUNCH_DURATION_MS - SHUDDER_MS),
+        );
+        const eased = 1 - Math.pow(1 - t, 2);
+        y = PAD.y + (APEX_Y - PAD.y) * eased;
+        rotation = -0.3 + Math.sin(t * 6) * 0.05;
+        // Big takeoff puff once we leave the pad.
+        if (this.dustCooldownMs >= 0 && world) {
+          world.particles.emit('crashDust', PAD.x, PAD.y + 14, 8);
+          this.dustCooldownMs = -1;
+        }
+      }
     } else if (v.phase === 'crashing') {
       const t = Math.min(1, v.launchTimer / TUNING.CRASH_DURATION_MS);
       const eased = t * t;

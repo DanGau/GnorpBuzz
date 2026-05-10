@@ -92,7 +92,7 @@ export class WorldRenderer {
     this.flowerView.update(state, world, dtMs);
     this.hiveView.update(state, world, selectedId, dtMs);
     this.beeView.update(world, state.elapsedMs);
-    this.vesselView.update(state, dtMs, selectedId === 'vessel');
+    this.vesselView.update(state, dtMs, selectedId === 'vessel', world);
     this.particleView.update(world.particles);
   }
 }

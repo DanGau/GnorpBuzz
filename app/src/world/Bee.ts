@@ -10,6 +10,7 @@ export type BeeState =
   | 'flying-to-flower'
   | 'harvesting'
   | 'flying-to-pollen-source'
+  | 'dive-bombing-pollen'
   | 'picking-up-pollen'
   | 'flying-home-with-pollen'
   | 'producing-wax'
@@ -23,6 +24,7 @@ export type BeeCarrying = 'none' | 'pollen' | 'wax-block';
 
 const ARRIVE_THRESHOLD = 4;
 const IDLE_WANDER_RADIUS = 30;
+export const TIP_DURATION_MS = 700;
 
 let beeIdSeq = 1;
 
@@ -53,6 +55,18 @@ export class Bee {
   steamCooldownMs: number;
   // Used by foragers to drop a sloppy pollen trail home.
   trailCooldownMs: number;
+  // Wind-up countdown — while > 0, flyToward backs away from the target
+  // before launching forward (anticipation lurch).
+  windupRemainingMs: number;
+  // Idle bookkeeping: how long the bee has been continuously idle, used to
+  // schedule tip-over animations and "?" pops on confused idle cycles.
+  idleAccumulatedMs: number;
+  consecutiveIdleResets: number;
+  // Tip-over animation timeline. While > 0, BeeView reads tipPhaseMs to
+  // animate a brief lean-and-snap. Reset to a future scheduled time when
+  // animation completes.
+  tipPhaseMs: number;
+  nextTipScheduledAtMs: number;
 
   constructor(role: BeeRole, homeHiveId: string, homeX: number, homeY: number) {
     this.id = `bee-${beeIdSeq++}`;
@@ -75,6 +89,11 @@ export class Bee {
     this.shakeUntilMs = 0;
     this.steamCooldownMs = 0;
     this.trailCooldownMs = 0;
+    this.windupRemainingMs = 0;
+    this.idleAccumulatedMs = 0;
+    this.consecutiveIdleResets = 0;
+    this.tipPhaseMs = 0;
+    this.nextTipScheduledAtMs = 4000 + Math.random() * 3000;
   }
 
   private flyToward(dtMs: number): boolean {
@@ -83,9 +102,23 @@ export class Bee {
     const dx = this.targetX - this.x;
     const dy = this.targetY - this.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < ARRIVE_THRESHOLD) return true;
+    if (dist < ARRIVE_THRESHOLD && this.windupRemainingMs <= 0) return true;
+
+    // Wind-up: before any flight, lurch backward briefly. Cartoon anticipation.
+    if (this.windupRemainingMs > 0) {
+      this.windupRemainingMs -= dtMs;
+      if (dist > 0) {
+        const back = -45 * (dtMs / 1000);
+        this.x += (dx / dist) * back;
+        this.y += (dy / dist) * back;
+      }
+      return false;
+    }
+
     // Per-bee speed jitter (±15%) keeps the swarm from moving in lockstep.
-    const speed = TUNING.BEE_SPEED * (1 + this.seed * 0.15);
+    let speed = TUNING.BEE_SPEED * (1 + this.seed * 0.15);
+    // Dive-bombing: wax-makers drop fast on the second leg of pollen pickup.
+    if (this.state === 'dive-bombing-pollen') speed *= 2.2;
     const move = speed * (dtMs / 1000);
     if (move >= dist) {
       this.x = this.targetX;
@@ -102,6 +135,13 @@ export class Bee {
     this.shakeUntilMs = state.elapsedMs + durationMs;
   }
 
+  /** Set a flight target with a small anticipation wind-up. */
+  private setFlightTarget(x: number, y: number, windupMs = 90): void {
+    this.targetX = x;
+    this.targetY = y;
+    this.windupRemainingMs = windupMs;
+  }
+
   private homePos(world: World): { x: number; y: number } {
     const home = world.getHivePosition(this.homeHiveId);
     return home ?? { x: this.x, y: this.y };
@@ -109,6 +149,27 @@ export class Bee {
 
   update(dtMs: number, state: GameState, world: World): void {
     this.flapPhase += (dtMs / 1000) * 30;
+
+    // Track continuous idle time for tip-over and "?" pops.
+    if (this.state === 'idle') {
+      this.idleAccumulatedMs += dtMs;
+    } else {
+      this.idleAccumulatedMs = 0;
+      this.consecutiveIdleResets = 0;
+    }
+
+    // Tip-over scheduler: while idle, occasionally lean and snap upright.
+    if (this.tipPhaseMs > 0) {
+      this.tipPhaseMs -= dtMs;
+      if (this.tipPhaseMs < 0) this.tipPhaseMs = 0;
+    } else if (
+      this.state === 'idle' &&
+      this.idleAccumulatedMs >= this.nextTipScheduledAtMs
+    ) {
+      this.tipPhaseMs = TIP_DURATION_MS;
+      this.nextTipScheduledAtMs =
+        this.idleAccumulatedMs + 4000 + Math.random() * 4000;
+    }
 
     if (this.role === 'forager') {
       this.updateForager(dtMs, state, world);
@@ -129,9 +190,12 @@ export class Bee {
           const claimed = this.tryClaimFlower(state, world);
           if (claimed) {
             this.state = 'flying-to-flower';
+            this.windupRemainingMs = 100;
+            this.consecutiveIdleResets = 0;
           } else {
             this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
             this.pickIdleTarget(world);
+            this.bumpIdleConfusion(state, world);
           }
         }
         this.flyToward(dtMs);
@@ -169,8 +233,7 @@ export class Bee {
           this.targetFlowerId = null;
           this.carrying = 'pollen';
           const home = this.homePos(world);
-          this.targetX = home.x;
-          this.targetY = home.y - 10;
+          this.setFlightTarget(home.x, home.y - 10);
           this.state = 'flying-home-with-pollen';
           this.trailCooldownMs = 0;
         }
@@ -247,12 +310,14 @@ export class Bee {
           const source = this.findPollenSource(state, world);
           if (source) {
             this.targetHiveId = source.hiveId;
-            this.targetX = source.x + 25;
-            this.targetY = source.y - 10;
+            // Dive-bomb approach: overshoot 50px above pickup point first.
+            this.setFlightTarget(source.x + 25, source.y - 60);
             this.state = 'flying-to-pollen-source';
+            this.consecutiveIdleResets = 0;
           } else {
             this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
             this.pickIdleTarget(world);
+            this.bumpIdleConfusion(state, world);
           }
         }
         this.flyToward(dtMs);
@@ -260,14 +325,32 @@ export class Bee {
       }
       case 'flying-to-pollen-source': {
         if (this.flyToward(dtMs)) {
+          // Reached the elevated overshoot point — now plummet to the pickup.
           const hive = state.hives.find((h) => h.id === this.targetHiveId);
           if (hive && hive.type === 'forager' && (hive as ForagerHiveData).pollen > 0) {
-            this.state = 'picking-up-pollen';
-            this.workTimer = TUNING.PICKUP_DURATION_MS;
+            const pos = world.getHivePosition(hive.id);
+            if (pos) {
+              this.targetX = pos.x + 25;
+              this.targetY = pos.y - 10;
+              this.windupRemainingMs = 60; // tiny held-breath beat at apex
+              this.state = 'dive-bombing-pollen';
+            } else {
+              this.state = 'picking-up-pollen';
+              this.workTimer = TUNING.PICKUP_DURATION_MS;
+            }
           } else {
             this.targetHiveId = null;
             this.returnToIdle(world);
           }
+        }
+        break;
+      }
+      case 'dive-bombing-pollen': {
+        if (this.flyToward(dtMs)) {
+          this.state = 'picking-up-pollen';
+          this.workTimer = TUNING.PICKUP_DURATION_MS;
+          this.pulseShake(state, 160);
+          world.particles.emit('crashDust', this.x, this.y + 4, 3);
         }
         break;
       }
@@ -280,8 +363,7 @@ export class Bee {
             this.carrying = 'pollen';
             this.targetHiveId = null;
             const home = this.homePos(world);
-            this.targetX = home.x;
-            this.targetY = home.y - 10;
+            this.setFlightTarget(home.x, home.y - 10);
             this.state = 'flying-home-with-pollen';
             // "Hup!" body-shake on pickup + small puff
             this.pulseShake(state);
@@ -362,20 +444,22 @@ export class Bee {
       case 'idle': {
         this.idleWaitMs -= dtMs;
         if (this.idleWaitMs <= 0) {
-          // Don't fetch new blocks if the vessel can't accept them.
           if (state.vessel.phase !== 'building') {
             this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
             this.pickIdleTarget(world);
+            // Builders idling because vessel is full/ready get a "huh" too.
+            this.bumpIdleConfusion(state, world);
           } else {
             const source = this.findWaxSource(state, world);
             if (source) {
               this.targetHiveId = source.hiveId;
-              this.targetX = source.x - 25;
-              this.targetY = source.y - 10;
+              this.setFlightTarget(source.x - 25, source.y - 10);
               this.state = 'flying-to-wax-source';
+              this.consecutiveIdleResets = 0;
             } else {
               this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
               this.pickIdleTarget(world);
+              this.bumpIdleConfusion(state, world);
             }
           }
         }
@@ -403,8 +487,7 @@ export class Bee {
             (hive as WaxHiveData).waxBlocks -= 1;
             this.carrying = 'wax-block';
             this.targetHiveId = null;
-            this.targetX = WORLD.VESSEL_PAD.x;
-            this.targetY = WORLD.VESSEL_PAD.y - 30;
+            this.setFlightTarget(WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y - 30);
             this.state = 'flying-to-vessel';
             this.pulseShake(state);
             world.particles.emit('crashDust', this.x, this.y + 4, 2);
@@ -436,8 +519,7 @@ export class Bee {
           this.pulseShake(state, 200);
           this.carrying = 'none';
           const home = this.homePos(world);
-          this.targetX = home.x;
-          this.targetY = home.y - 10;
+          this.setFlightTarget(home.x, home.y - 10, 60);
           this.state = 'flying-home-empty';
         }
         break;
@@ -492,5 +574,15 @@ export class Bee {
     const radius = Math.random() * IDLE_WANDER_RADIUS;
     this.targetX = home.x + Math.cos(angle) * radius;
     this.targetY = home.y + Math.sin(angle) * radius * 0.6 - 15;
+  }
+
+  /** Called when an idle cycle expires without finding work. After 3 in a
+   * row, pop a "?" particle above the bee. */
+  private bumpIdleConfusion(_state: GameState, world: World): void {
+    this.consecutiveIdleResets += 1;
+    if (this.consecutiveIdleResets >= 3) {
+      world.particles.emit('huh', this.x, this.y - 12, 1);
+      this.consecutiveIdleResets = 0;
+    }
   }
 }
