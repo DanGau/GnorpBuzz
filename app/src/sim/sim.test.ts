@@ -4,23 +4,24 @@ import {
   TUNING,
   totalBees,
   totalPollen,
-  totalWaxBlocks,
-  nextHiveCost,
+  spendableWax,
+  nextBeeCost,
+  getForagerHive,
+  getWaxHive,
 } from './state';
-import { queenSystem } from './systems/queen';
-import { buyHive, dismissJournal } from './actions';
+import { vesselSystem } from './systems/vessel';
+import { buyBee, dismissJournal, launchVessel } from './actions';
 import { serialize, deserialize } from './save';
 
 describe('sim state shape', () => {
-  it('starts with one Forager Hive and one Wax Hive', () => {
+  it('starts with one empty Forager Hive and one empty Wax Hive', () => {
     const s = createInitialState();
-    const foragers = s.hives.filter((h) => h.type === 'forager');
-    const waxen = s.hives.filter((h) => h.type === 'wax');
-    expect(foragers).toHaveLength(1);
-    expect(waxen).toHaveLength(1);
-    expect(totalBees(s)).toBe(5);
+    expect(s.hives).toHaveLength(2);
+    expect(getForagerHive(s).bees).toBe(0);
+    expect(getWaxHive(s).bees).toBe(0);
+    expect(totalBees(s)).toBe(0);
     expect(totalPollen(s)).toBe(0);
-    expect(totalWaxBlocks(s)).toBe(0);
+    expect(spendableWax(s)).toBe(0);
   });
 
   it('starts with flowers in the meadow at full bloom', () => {
@@ -33,7 +34,7 @@ describe('sim state shape', () => {
     }
   });
 
-  it('vessel needs the configured block count to launch', () => {
+  it('vessel needs the configured block count', () => {
     const s = createInitialState();
     expect(s.vessel.requiredBlocks).toBe(TUNING.VESSEL_BLOCKS_REQUIRED);
     expect(s.vessel.deliveredBlocks).toBe(0);
@@ -41,62 +42,72 @@ describe('sim state shape', () => {
   });
 });
 
-describe('queen', () => {
-  it('queen fills empty hive slots over time', () => {
-    const s = createInitialState();
-    // Forager hive has 3/4, wax hive has 2/4. Tick QUEEN_FILL_MS — one slot fills.
-    queenSystem(s, TUNING.QUEEN_FILL_MS);
-    expect(totalBees(s)).toBe(6);
-  });
-});
-
 describe('actions', () => {
-  it('buyHive forager fails when insufficient wax', () => {
+  it('first forager bee is free', () => {
     const s = createInitialState();
-    const result = buyHive(s, 'forager');
+    expect(nextBeeCost(s, 'forager')).toBe(0);
+    const result = buyBee(s, 'forager');
+    expect(result.ok).toBe(true);
+    expect(getForagerHive(s).bees).toBe(1);
+  });
+
+  it('first wax-maker bee is free', () => {
+    const s = createInitialState();
+    expect(nextBeeCost(s, 'wax')).toBe(0);
+    buyBee(s, 'wax');
+    expect(getWaxHive(s).bees).toBe(1);
+  });
+
+  it('subsequent bees cost wax and fail without it', () => {
+    const s = createInitialState();
+    buyBee(s, 'forager'); // free
+    expect(nextBeeCost(s, 'forager')).toBeGreaterThan(0);
+    const result = buyBee(s, 'forager');
     expect(result.ok).toBe(false);
   });
 
-  it('buyHive forager succeeds, deducts wax, adds empty hive', () => {
+  it('bee cost grows with each purchase', () => {
     const s = createInitialState();
-    const wax = s.hives.find((h) => h.type === 'wax')! as Extract<
-      typeof s.hives[number],
-      { type: 'wax' }
-    >;
-    wax.waxBlocks = 100;
-    const cost = nextHiveCost(s, 'forager');
-    const result = buyHive(s, 'forager');
+    buyBee(s, 'forager');
+    const c1 = nextBeeCost(s, 'forager');
+    // Hand-mutate to fake the next purchase happening
+    getForagerHive(s).bees = 5;
+    const cN = nextBeeCost(s, 'forager');
+    expect(cN).toBeGreaterThan(c1);
+  });
+
+  it('bee cost is independent per type', () => {
+    const s = createInitialState();
+    buyBee(s, 'forager');
+    expect(nextBeeCost(s, 'wax')).toBe(0); // wax bee still free
+  });
+
+  it('vessel transitions to ready (not launching) when full', () => {
+    const s = createInitialState();
+    s.vessel.deliveredBlocks = TUNING.VESSEL_BLOCKS_REQUIRED;
+    vesselSystem(s);
+    expect(s.vessel.phase).toBe('ready');
+  });
+
+  it('launchVessel only works when vessel is ready', () => {
+    const s = createInitialState();
+    expect(launchVessel(s).ok).toBe(false);
+    s.vessel.phase = 'ready';
+    expect(launchVessel(s).ok).toBe(true);
+    expect(s.vessel.phase).toBe('launching');
+  });
+
+  it('buying a bee can drain the vessel pile and revert ready→building', () => {
+    const s = createInitialState();
+    buyBee(s, 'forager'); // free
+    s.vessel.deliveredBlocks = TUNING.VESSEL_BLOCKS_REQUIRED;
+    vesselSystem(s);
+    expect(s.vessel.phase).toBe('ready');
+    // Forager has 1 bee, next costs > 0
+    const result = buyBee(s, 'forager');
     expect(result.ok).toBe(true);
-    expect(totalWaxBlocks(s)).toBe(100 - cost);
-    const foragers = s.hives.filter((h) => h.type === 'forager');
-    expect(foragers).toHaveLength(2);
-    expect(foragers[1].bees).toBe(0);
-  });
-
-  it('buyHive wax adds a new wax hive', () => {
-    const s = createInitialState();
-    const wax = s.hives.find((h) => h.type === 'wax')! as Extract<
-      typeof s.hives[number],
-      { type: 'wax' }
-    >;
-    wax.waxBlocks = 100;
-    buyHive(s, 'wax');
-    const waxen = s.hives.filter((h) => h.type === 'wax');
-    expect(waxen).toHaveLength(2);
-  });
-
-  it('hive cost grows independently per type', () => {
-    const s = createInitialState();
-    const c1 = nextHiveCost(s, 'forager');
-    // Push enough foragers to clear ceiling-rounding noise
-    for (let i = 0; i < 5; i++) {
-      s.hives.push({ id: `extra-f-${i}`, type: 'forager', slots: 4, bees: 0, pollen: 0 });
-    }
-    const c2 = nextHiveCost(s, 'forager');
-    expect(c2).toBeGreaterThan(c1);
-    // Wax cost unaffected by adding foragers
-    const cw = nextHiveCost(s, 'wax');
-    expect(cw).toBe(nextHiveCost(s, 'wax'));
+    expect(s.vessel.deliveredBlocks).toBeLessThan(TUNING.VESSEL_BLOCKS_REQUIRED);
+    expect(s.vessel.phase).toBe('building');
   });
 
   it('dismissJournal closes a pending entry', () => {
@@ -113,15 +124,10 @@ describe('actions', () => {
 describe('save', () => {
   it('round-trips state', () => {
     const s = createInitialState();
-    const f = s.hives[0] as Extract<typeof s.hives[number], { type: 'forager' }>;
-    f.pollen = 7;
+    getForagerHive(s).pollen = 7;
     s.flowers[0].yieldRemaining = 2;
     const restored = deserialize(serialize(s));
-    const f2 = restored.hives[0] as Extract<
-      typeof restored.hives[number],
-      { type: 'forager' }
-    >;
-    expect(f2.pollen).toBe(7);
+    expect(getForagerHive(restored).pollen).toBe(7);
     expect(restored.flowers[0].yieldRemaining).toBe(2);
   });
 });

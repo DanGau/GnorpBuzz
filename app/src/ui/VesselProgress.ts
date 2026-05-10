@@ -32,16 +32,25 @@ export class VesselProgress {
       this.fillEl.style.width = `${Math.min(100, pct).toFixed(1)}%`;
       this.statusEl.textContent = `${v.deliveredBlocks} / ${v.requiredBlocks} wax blocks delivered`;
       this.labelEl.textContent = 'PAPER AIRPLANE — UNDER CONSTRUCTION';
+      this.el.classList.remove('ready');
+    } else if (v.phase === 'ready') {
+      this.fillEl.style.width = `100%`;
+      this.statusEl.textContent = '✨ Click the airplane to launch!';
+      this.labelEl.textContent = 'PAPER AIRPLANE — READY';
+      this.el.classList.add('ready');
     } else if (v.phase === 'launching') {
       this.fillEl.style.width = `100%`;
       this.statusEl.textContent = 'Ascending…';
       this.labelEl.textContent = 'PAPER AIRPLANE — IN FLIGHT';
+      this.el.classList.remove('ready');
     } else if (v.phase === 'crashing') {
       this.statusEl.textContent = 'Falling.';
       this.labelEl.textContent = 'PAPER AIRPLANE — IN FLIGHT';
+      this.el.classList.remove('ready');
     } else if (v.phase === 'crashed') {
       this.statusEl.textContent = 'It crashed.';
       this.labelEl.textContent = 'PAPER AIRPLANE — DOWN';
+      this.el.classList.remove('ready');
     }
   }
 }

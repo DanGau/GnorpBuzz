@@ -284,9 +284,13 @@ export class Bee {
         if (this.workTimer <= 0) {
           if (state.vessel.phase === 'building') {
             state.vessel.deliveredBlocks += 1;
+          } else {
+            // Vessel doesn't want more blocks (ready/launched/etc.) — stockpile
+            // at home wax hive instead so the work isn't wasted.
+            const home = state.hives.find((h) => h.id === this.homeHiveId);
+            if (home && home.type === 'wax') home.waxBlocks += 1;
           }
           this.carrying = 'none';
-          // Head home
           const home = this.homePos(world);
           this.targetX = home.x;
           this.targetY = home.y - 10;

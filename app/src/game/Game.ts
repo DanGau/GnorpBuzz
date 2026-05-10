@@ -1,16 +1,19 @@
 import { Application, Container, Ticker } from 'pixi.js';
 import type { GameState, HiveType } from '../sim/state';
-import { createInitialState, totalPollen, totalWaxBlocks } from '../sim/state';
-import { queenSystem } from '../sim/systems/queen';
+import {
+  createInitialState,
+  totalPollen,
+  spendableWax,
+  nextBeeCost,
+} from '../sim/state';
 import { flowerSystem } from '../sim/systems/flowers';
 import { vesselSystem } from '../sim/systems/vessel';
 import { launchSystem } from '../sim/systems/launch';
 import { journalSystem } from '../sim/systems/journal';
-import { buyHive, dismissJournal } from '../sim/actions';
+import { buyBee, dismissJournal, launchVessel } from '../sim/actions';
 import type { ActionResult } from '../sim/actions';
 import { saveToStorage, loadFromStorage, clearStorage } from '../sim/save';
 import { Observer } from '../sim/observer';
-import { nextHiveCost } from '../sim/state';
 import { World } from '../world/World';
 import { WorldRenderer } from '../view/WorldRenderer';
 import { UI } from '../ui/UI';
@@ -20,8 +23,8 @@ export interface GameSnapshot {
   elapsedMs: number;
   paused: boolean;
   pollen: number;
-  waxBlocks: number;
-  hives: { id: string; type: string; bees: number; slots: number; pollen?: number; waxBlocks?: number }[];
+  wax: number;
+  hives: { id: string; type: string; bees: number; pollen?: number; waxBlocks?: number }[];
   flowers: { id: string; yieldRemaining: number; regrowMs: number; claimed: boolean }[];
   totalBees: number;
   vessel: { delivered: number; required: number; phase: string };
@@ -50,7 +53,9 @@ export class Game {
     this.state = loadFromStorage() ?? createInitialState();
     this.observer = new Observer();
     this.world = new World();
-    this.renderer = new WorldRenderer();
+    this.renderer = new WorldRenderer({
+      onLaunchClick: () => this.launchVessel(),
+    });
     this.world.reconcile(this.state);
   }
 
@@ -71,10 +76,7 @@ export class Game {
   private runSystems(dtMs: number): void {
     this.state.tick += 1;
     this.state.elapsedMs += dtMs;
-    queenSystem(this.state, dtMs);
     flowerSystem(this.state, dtMs);
-    // Bee behaviors run inside world.update via the reconciler, since they
-    // mutate sim state through callbacks (deposit pollen, deliver block, etc.)
     this.world.reconcile(this.state);
     this.world.update(dtMs, this.state);
     vesselSystem(this.state);
@@ -115,12 +117,11 @@ export class Game {
       elapsedMs: this.state.elapsedMs,
       paused: this.paused,
       pollen: totalPollen(this.state),
-      waxBlocks: totalWaxBlocks(this.state),
+      wax: spendableWax(this.state),
       hives: this.state.hives.map((h) => ({
         id: h.id,
         type: h.type,
         bees: h.bees,
-        slots: h.slots,
         pollen: h.type === 'forager' ? h.pollen : undefined,
         waxBlocks: h.type === 'wax' ? h.waxBlocks : undefined,
       })),
@@ -140,8 +141,8 @@ export class Game {
         pending: this.state.journal.pending,
         entries: this.state.journal.entries.length,
       },
-      nextForagerCost: nextHiveCost(this.state, 'forager'),
-      nextWaxCost: nextHiveCost(this.state, 'wax'),
+      nextForagerCost: nextBeeCost(this.state, 'forager'),
+      nextWaxCost: nextBeeCost(this.state, 'wax'),
     };
   }
 
@@ -166,8 +167,18 @@ export class Game {
 
   // ---- Actions (UI-callable mutators) ----
 
-  buyHive(type: HiveType): ActionResult {
-    const result = buyHive(this.state, type);
+  buyBee(type: HiveType): ActionResult {
+    const result = buyBee(this.state, type);
+    if (result.ok) {
+      saveToStorage(this.state);
+      this.observer.emit();
+      if (this.ui) this.ui.update();
+    }
+    return result;
+  }
+
+  launchVessel(): ActionResult {
+    const result = launchVessel(this.state);
     if (result.ok) {
       saveToStorage(this.state);
       this.observer.emit();
@@ -202,8 +213,9 @@ export class Game {
       advanceTicks: (n: number) => this.advanceTicks(n),
       render: () => this.render(),
       stepAndRender: (n: number) => this.stepAndRender(n),
-      buyForagerHive: () => this.buyHive('forager'),
-      buyWaxHive: () => this.buyHive('wax'),
+      buyForagerBee: () => this.buyBee('forager'),
+      buyWaxBee: () => this.buyBee('wax'),
+      launchVessel: () => this.launchVessel(),
       dismissJournal: () => this.dismissJournal(),
       resetGame: () => this.resetGame(),
       worldSnapshot: () => this.world.snapshot(),

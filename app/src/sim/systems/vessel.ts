@@ -1,11 +1,11 @@
 import type { GameState } from '../state';
 
-// Watches deliveredBlocks; when the vessel has enough, transitions to launching.
+// When the vessel has enough blocks delivered, transition to 'ready' (waiting
+// for player click). Does NOT auto-launch.
 export function vesselSystem(state: GameState): void {
   const v = state.vessel;
   if (v.phase !== 'building') return;
   if (v.deliveredBlocks >= v.requiredBlocks) {
-    v.phase = 'launching';
-    v.launchTimer = 0;
+    v.phase = 'ready';
   }
 }

@@ -23,21 +23,25 @@ Two resources are visible: **pollen** (yellow, raw, accumulates at Forager Hives
 
 ## Buildings
 
+There is exactly **one Forager Hive** and **one Wax Hive** in Phase 1. Hives are fixed structures; you scale by adding individual worker bees, not by building more hives. There is no Queen and no auto-spawning — every bee enters the colony only when the player buys it.
+
 ### Forager Hive
 
-- Spawns Foragers (their permanent home).
-- Holds a visible pollen stockpile (1–3 visible pots that fill as foragers deposit).
-- Foragers can deposit at *any* Forager Hive but prefer their home hive.
-- Cost: same as before (10 wax blocks base, r=1.08).
+- Holds the Forager bees that the player has bought.
+- Holds a visible pollen stockpile (small pots at the base of the skep that fill as foragers deposit).
+- Foragers always return to this single home hive.
 
 ### Wax Hive
 
-- Spawns Wax-makers (their permanent home).
-- Holds a visible wax-block stockpile (small pile of cream-colored hexagons that grows and shrinks).
-- Wax-makers fetch pollen from any Forager Hive, return, produce a block, then carry it to the vessel.
-- Cost: same scaling as Forager Hive but its own independent count.
+- Holds the Wax-maker bees that the player has bought.
+- Holds an overflow wax-block stockpile (visible cream hexes beside the workshop) — populated when the vessel isn't accepting more blocks.
+- Wax-makers fetch pollen from the Forager Hive, return, produce a block, then carry it to the vessel.
 
-Both hive types use the same Queen fill mechanic — empty slots fill at the global Queen rate.
+### Buying bees
+
+- The first bee of each type is **free** — clicking "Build forager" or "Build wax-maker" with zero of that type costs nothing. This is what kicks off play.
+- Subsequent bees cost wax blocks: `cost = ceil(BASE × GROWTH^(currentCount - 1))` where BASE=2, GROWTH=1.3.
+- Bee purchases drain wax from the wax-hive stockpile first, then from the vessel pile if the stockpile is empty. Buying bees while the vessel is full can revert it from `ready` back to `building`.
 
 ### Flowers
 
@@ -50,8 +54,9 @@ Both hive types use the same Queen fill mechanic — empty slots fill at the glo
 
 - Visible construction pile at center-meadow.
 - Each delivered wax block adds visibly to the pile.
-- Vessel "completes" when N blocks have been delivered (Phase 1 target: 8 blocks for the paper airplane).
-- After completion, the construction pile transforms into the vessel (existing launch animation continues from there).
+- Vessel transitions to **`ready`** when N blocks have been delivered (Phase 1: 8 blocks for the paper airplane). The pile transforms into a fully-assembled paper airplane that gently glows and pulses.
+- The vessel does **not** auto-launch. The player must **click the airplane** to send it. This makes "launching" a deliberate, satisfying action rather than a passive event.
+- Buying bees while the vessel is `ready` can drain the pile and revert to `building`, which is intended — choose between "more bees now" and "launch now."
 
 ## Bee state machines
 
@@ -135,12 +140,16 @@ Same as before: **wax blocks** are the meta-currency. Building a hive costs N bl
 
 ## Phase 1 starter state (revised MVP)
 
-- **1 Forager Hive** at slot 0 with 3 foragers.
-- **1 Wax Hive** at slot 2 (a few positions away) with 2 wax-makers.
-- **6 flowers** scattered across the meadow (default yield 5, regrow 60s).
-- **0 pollen, 0 wax blocks.**
-- **Vessel:** requires 8 blocks for first launch.
-- Buy panel offers both hive types.
+The game loads into a **deliberately empty colony**. Nothing happens until the player acts.
+
+- **1 empty Forager Hive** on the left (no foragers).
+- **1 empty Wax Hive** on the right (no wax-makers).
+- **8 flowers** scattered across the meadow (default yield 5, regrow 60s).
+- **0 pollen, 0 wax blocks, 0 bees.**
+- **Vessel:** empty pad with a faint airplane outline; requires 8 blocks for first launch.
+- Buy panel offers both bee types, both with first-bee-FREE.
+
+The player's first actions are: build the first forager (free), build the first wax-maker (free). Production begins. Player buys more bees as wax accumulates. When 8 blocks are delivered, the airplane assembles and waits for a click.
 
 ## Tuning targets (placeholders)
 

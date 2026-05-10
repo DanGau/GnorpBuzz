@@ -1,6 +1,10 @@
 import type { Game } from '../game/Game';
-import { nextHiveCost, totalWaxBlocks } from '../sim/state';
+import { nextBeeCost, spendableWax, getForagerHive, getWaxHive } from '../sim/state';
 import type { HiveType } from '../sim/state';
+
+// Buys individual worker bees (foragers + wax-makers). First bee of each type
+// is free; subsequent bees cost wax. The hive structure itself is fixed —
+// you only ever scale by adding bees to the existing hive.
 
 export class BuyHivePanel {
   readonly el: HTMLDivElement;
@@ -11,15 +15,17 @@ export class BuyHivePanel {
     this.el.className = 'buy-panel panel';
     this.el.innerHTML = `
       <div class="hive-row" data-type="forager">
-        <div class="label">FORAGER HIVE</div>
-        <div class="cost">You have <span class="count">0</span> · Next: <span class="cost-num">0</span> wax</div>
-        <button>Build forager hive</button>
+        <div class="label">FORAGER BEES</div>
+        <div class="cost">You have <span class="count">0</span></div>
+        <div class="cost">Next: <span class="cost-num">FREE</span></div>
+        <button>Build forager</button>
       </div>
       <hr style="border:0;border-top:1px solid #5a4a30;margin:10px 0;">
       <div class="hive-row" data-type="wax">
-        <div class="label">WAX HIVE</div>
-        <div class="cost">You have <span class="count">0</span> · Next: <span class="cost-num">0</span> wax</div>
-        <button>Build wax hive</button>
+        <div class="label">WAX-MAKER BEES</div>
+        <div class="cost">You have <span class="count">0</span></div>
+        <div class="cost">Next: <span class="cost-num">FREE</span></div>
+        <button>Build wax-maker</button>
       </div>
     `;
     this.rows = (['forager', 'wax'] as HiveType[]).map((type) => {
@@ -27,19 +33,21 @@ export class BuyHivePanel {
       const button = row.querySelector('button')!;
       const costEl = row.querySelector('.cost-num')! as HTMLSpanElement;
       const countEl = row.querySelector('.count')! as HTMLSpanElement;
-      button.addEventListener('click', () => this.game.buyHive(type));
+      button.addEventListener('click', () => this.game.buyBee(type));
       return { type, costEl, countEl, button };
     });
   }
 
   update(): void {
-    const wax = totalWaxBlocks(this.game.state);
+    const wax = spendableWax(this.game.state);
+    const forager = getForagerHive(this.game.state);
+    const waxh = getWaxHive(this.game.state);
     for (const row of this.rows) {
-      const cost = nextHiveCost(this.game.state, row.type);
-      const count = this.game.state.hives.filter((h) => h.type === row.type).length;
-      row.costEl.textContent = cost.toString();
+      const cost = nextBeeCost(this.game.state, row.type);
+      const count = row.type === 'forager' ? forager.bees : waxh.bees;
+      row.costEl.textContent = cost === 0 ? 'FREE' : `${cost} wax`;
       row.countEl.textContent = count.toString();
-      row.button.disabled = wax < cost;
+      row.button.disabled = cost > 0 && wax < cost;
     }
   }
 }

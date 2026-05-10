@@ -8,6 +8,10 @@ import { HiveView } from './HiveView';
 import { BeeView } from './BeeView';
 import { VesselView } from './VesselView';
 
+export interface WorldRendererCallbacks {
+  onLaunchClick: () => void;
+}
+
 export class WorldRenderer {
   readonly root: Container;
   private worldView: WorldView;
@@ -16,15 +20,16 @@ export class WorldRenderer {
   private beeView: BeeView;
   private vesselView: VesselView;
 
-  constructor() {
+  constructor(callbacks: WorldRendererCallbacks) {
     this.root = new Container();
+    // Pixi v8: enable interaction on the root container so child hit-areas fire
+    this.root.eventMode = 'static';
     this.worldView = new WorldView();
     this.flowerView = new FlowerView();
     this.hiveView = new HiveView();
     this.beeView = new BeeView();
-    this.vesselView = new VesselView();
+    this.vesselView = new VesselView(callbacks.onLaunchClick);
 
-    // Z order: world bg → meadow flowers + sky flower → vessel → hives → bees
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
     this.root.addChild(this.vesselView.container);
@@ -51,6 +56,6 @@ export class WorldRenderer {
     this.flowerView.update(state, world, dtMs);
     this.hiveView.update(state, world);
     this.beeView.update(world);
-    this.vesselView.update(state);
+    this.vesselView.update(state, dtMs);
   }
 }

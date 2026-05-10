@@ -2,13 +2,18 @@
 
 How bees enter the colony, grow, assign to roles, and migrate to the flower. Pairs with `docs/dps-model.md` (which uses `count` as an input) and `docs/phases.md`.
 
-## Model
+## Model (revised after first-play feedback)
 
-**Hybrid: buy hives, Queen fills them.** Resources buy hive capacity (a hard cap on population per role). A single eternal Queen auto-grows population to fill empty slots over time.
+**Single hive of each type. Buy bees directly. No queen.**
 
-- Player decides *capacity*. The Queen handles *fill*.
-- Each role has its own hive type with its own cost curve.
-- One Queen, present from game start, never dies.
+- Each role has exactly one hive (fixed structure).
+- The player buys individual worker bees, which join the appropriate hive.
+- The first bee of each type is free; subsequent bees cost wax with exponential growth.
+- There is no Queen and no auto-spawning. Every bee enters the colony via a deliberate player action.
+
+This makes early-game progression feel like a sequence of decisions ("buy my first forager," "buy my first wax-maker," "save up for a 2nd forager") rather than a passive wait.
+
+The earlier hive/queen model is parked for re-introduction in later phases if scaling demands it.
 
 ## Hives
 

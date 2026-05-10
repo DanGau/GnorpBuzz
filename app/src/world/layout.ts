@@ -16,17 +16,11 @@ export const WORLD = {
   // Vessel construction site.
   VESSEL_PAD: { x: 640, y: 460 },
 
-  // Predetermined hive slot positions in the meadow. Up to 8 slots for MVP;
-  // hives beyond this overflow onto a second row (handled at slot-pick time).
+  // Single Forager Hive on the left, single Wax Hive on the right. Vessel pad
+  // sits between them at center-meadow.
   HIVE_SLOTS: [
-    { x: 160, y: 620 },
-    { x: 320, y: 620 },
-    { x: 480, y: 620 },
-    { x: 800, y: 620 },
-    { x: 960, y: 620 },
-    { x: 1120, y: 620 },
-    { x: 240, y: 680 },
-    { x: 1040, y: 680 },
+    { x: 380, y: 620 }, // Forager Hive (left of vessel)
+    { x: 900, y: 620 }, // Wax Hive (right of vessel)
   ],
 
   // Decorative meadow flowers (static for MVP, future nectar mini-event).
@@ -43,8 +37,5 @@ export const WORLD = {
 } as const;
 
 export function hiveSlotPosition(index: number): { x: number; y: number } {
-  if (index < WORLD.HIVE_SLOTS.length) return WORLD.HIVE_SLOTS[index];
-  // Overflow: place along the back row at incremental x.
-  const overflow = index - WORLD.HIVE_SLOTS.length;
-  return { x: 100 + overflow * 100, y: 560 };
+  return WORLD.HIVE_SLOTS[index] ?? WORLD.HIVE_SLOTS[0];
 }

@@ -1,47 +1,85 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, FederatedPointerEvent } from 'pixi.js';
 import type { GameState } from '../sim/state';
 import { TUNING } from '../sim/state';
 import { WORLD } from '../world/layout';
-
-// Renders the vessel through its build → launch → crash arc.
-// During building: a growing pile of wax blocks at the pad. When all blocks
-// are delivered, the pile transforms into a paper airplane that launches.
 
 const PAD = WORLD.VESSEL_PAD;
 const APEX_Y = 200;
 
 export class VesselView {
   readonly container: Container;
-  private pile: Graphics; // building-phase pile of blocks
+  private pile: Graphics;
   private airplane: Graphics;
+  private hint: Graphics;
+  private hitArea: Graphics;
+  private pulse = 0;
+  private onLaunch: () => void;
 
-  constructor() {
+  constructor(onLaunch: () => void) {
+    this.onLaunch = onLaunch;
     this.container = new Container();
     this.pile = new Graphics();
     this.airplane = new Graphics();
+    this.hint = new Graphics();
+    this.hitArea = new Graphics();
     this.container.addChild(this.pile);
+    this.container.addChild(this.hint);
     this.container.addChild(this.airplane);
+    this.container.addChild(this.hitArea);
+
+    // The hit area sits invisibly on top of the airplane and only catches
+    // clicks while the vessel is 'ready'. It's enabled/disabled in update().
+    this.hitArea.eventMode = 'none';
+    this.hitArea.cursor = 'pointer';
+    this.hitArea.on('pointertap', (_e: FederatedPointerEvent) => {
+      this.onLaunch();
+    });
   }
 
-  update(state: GameState): void {
+  update(state: GameState, dtMs: number): void {
+    this.pulse += dtMs / 1000;
     this.pile.clear();
     this.airplane.clear();
+    this.hint.clear();
 
     const v = state.vessel;
-    if (v.phase === 'reviewed') return;
+    if (v.phase === 'reviewed') {
+      this.hitArea.eventMode = 'none';
+      this.hitArea.clear();
+      return;
+    }
 
     if (v.phase === 'building') {
       this.drawPile(v.deliveredBlocks, v.requiredBlocks);
       this.pile.x = PAD.x;
       this.pile.y = PAD.y;
-      this.pile.rotation = 0;
       this.airplane.x = PAD.x;
       this.airplane.y = PAD.y;
       this.airplane.rotation = 0;
+      this.hitArea.eventMode = 'none';
+      this.hitArea.clear();
       return;
     }
 
-    // Airplane in flight or crashed
+    if (v.phase === 'ready') {
+      // Airplane assembled, sitting on the pad, gently glowing/pulsing
+      const breath = 1 + Math.sin(this.pulse * 3) * 0.08;
+      // Glow halo
+      this.hint.circle(PAD.x, PAD.y - 4, 70 * breath).fill({ color: 0xfff2cf, alpha: 0.18 });
+      this.hint.circle(PAD.x, PAD.y - 4, 50 * breath).fill({ color: 0xffe680, alpha: 0.22 });
+      this.drawAirplane(1);
+      this.airplane.x = PAD.x;
+      this.airplane.y = PAD.y - 4;
+      this.airplane.rotation = -0.08;
+      // Activate hit area
+      this.hitArea.eventMode = 'static';
+      this.hitArea.clear();
+      this.hitArea
+        .roundRect(PAD.x - 60, PAD.y - 30, 120, 50, 8)
+        .fill({ color: 0xffffff, alpha: 0.001 });
+      return;
+    }
+
     let x = PAD.x;
     let y = PAD.y;
     let rotation = 0;
@@ -67,12 +105,12 @@ export class VesselView {
     this.airplane.x = x;
     this.airplane.y = y;
     this.airplane.rotation = rotation;
+    this.hitArea.eventMode = 'none';
+    this.hitArea.clear();
   }
 
   private drawPile(delivered: number, required: number): void {
     const g = this.pile;
-    // Stack delivered blocks pyramid-style. Up to ~8 blocks; visually scale
-    // each block so the pyramid sits cleanly on the pad.
     const blockSize = 7;
     let placed = 0;
     let row = 0;
@@ -87,14 +125,9 @@ export class VesselView {
       }
       row += 1;
     }
-    // Faint outline of where the airplane will appear
     if (delivered < required) {
-      g.poly([
-        40, 0,
-        -30, -18,
-        -10, 0,
-        -30, 18,
-      ]).stroke({ color: 0x9a8d65, width: 1, alpha: 0.3 });
+      g.poly([40, 0, -30, -18, -10, 0, -30, 18])
+        .stroke({ color: 0x9a8d65, width: 1, alpha: 0.3 });
     }
   }
 
