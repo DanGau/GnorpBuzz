@@ -59,12 +59,23 @@ export class WorldRenderer {
     for (const cb of this.fitListeners) cb();
   }
 
-  /** Convert world coordinates into CSS pixel coordinates for the canvas. */
+  /** Convert world coordinates into CSS pixel coordinates over the canvas.
+   * Computed from the canvas's CSS dimensions to stay correct under any DPR
+   * (Windows display scaling, retina displays, etc.) — Pixi's renderer.width
+   * is already CSS-equivalent under autoDensity, so we use canvas.clientWidth
+   * directly to avoid double-applying the resolution. */
   worldToScreen(worldX: number, worldY: number, app: Application): { x: number; y: number } {
-    const dpr = app.renderer.resolution || 1;
+    const canvas = app.canvas;
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    const sx = cssW / WORLD.WIDTH;
+    const sy = cssH / WORLD.HEIGHT;
+    const s = Math.min(sx, sy);
+    const offsetX = (cssW - WORLD.WIDTH * s) / 2;
+    const offsetY = (cssH - WORLD.HEIGHT * s) / 2;
     return {
-      x: (this.root.x + worldX * this.root.scale.x) / dpr,
-      y: (this.root.y + worldY * this.root.scale.y) / dpr,
+      x: offsetX + worldX * s,
+      y: offsetY + worldY * s,
     };
   }
 
