@@ -10,6 +10,7 @@ import type { GameState, ForagerHiveData, WaxHiveData } from '../sim/state';
 interface HiveSprite {
   id: string;
   type: 'forager' | 'wax';
+  shadow: Graphics;
   highlight: Graphics;
   body: Graphics;
   pollenPots: Graphics;
@@ -35,16 +36,18 @@ export class HiveView {
 
     for (const hive of world.hives.values()) {
       if (!this.sprites.has(hive.hiveId)) {
+        const shadow = new Graphics();
         const highlight = new Graphics();
         const body = new Graphics();
         const pollenPots = new Graphics();
         const blockStockpile = new Graphics();
-        for (const g of [highlight, body, pollenPots, blockStockpile]) {
+        // Z-order: shadow at the bottom (under the hive), then highlight halo,
+        // then the hive body, then on-body decorations.
+        for (const g of [shadow, highlight, body, pollenPots, blockStockpile]) {
           g.x = hive.x;
           g.y = hive.y;
           this.container.addChild(g);
         }
-        // Make the body interactive — click fires selection callback.
         body.eventMode = 'static';
         body.cursor = 'pointer';
         const id = hive.hiveId;
@@ -55,6 +58,7 @@ export class HiveView {
         const sprite: HiveSprite = {
           id: hive.hiveId,
           type: hive.type,
+          shadow,
           highlight,
           body,
           pollenPots,
@@ -62,6 +66,7 @@ export class HiveView {
           x: hive.x,
           y: hive.y,
         };
+        this.drawShadow(sprite);
         this.drawBody(sprite);
         this.sprites.set(hive.hiveId, sprite);
       }
@@ -69,7 +74,13 @@ export class HiveView {
     const liveIds = new Set(Array.from(world.hives.values()).map((h) => h.hiveId));
     for (const [id, sprite] of this.sprites) {
       if (!liveIds.has(id)) {
-        for (const g of [sprite.highlight, sprite.body, sprite.pollenPots, sprite.blockStockpile]) {
+        for (const g of [
+          sprite.shadow,
+          sprite.highlight,
+          sprite.body,
+          sprite.pollenPots,
+          sprite.blockStockpile,
+        ]) {
           this.container.removeChild(g);
           g.destroy();
         }
@@ -126,7 +137,14 @@ export class HiveView {
       g.rect(12, -60, 10, 18).fill(0x8d7440);
       g.rect(11, -62, 12, 4).fill(0x6b5631);
     }
-    g.ellipse(0, 14, 36, 6).fill({ color: 0x000000, alpha: 0.25 });
+  }
+
+  private drawShadow(sprite: HiveSprite): void {
+    const g = sprite.shadow;
+    g.clear();
+    // Sit just below the hive's footprint so it reads as a ground shadow.
+    const dy = sprite.type === 'forager' ? 24 : 9;
+    g.ellipse(0, dy, 38, 6).fill({ color: 0x000000, alpha: 0.28 });
   }
 
   private drawPollenPots(sprite: HiveSprite, pollen: number): void {
