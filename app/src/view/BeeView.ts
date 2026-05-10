@@ -46,10 +46,37 @@ export class BeeView {
         this.drawBee(sprite.graphics, bee.role);
         sprite.bee = bee;
       }
-      sprite.graphics.x = bee.x;
-      sprite.graphics.y = bee.y;
-      sprite.carry.x = bee.x;
-      sprite.carry.y = bee.y;
+
+      // Visual arc: bow the rendered position perpendicular to the travel
+      // line so flights curve outward instead of running on a ruler.
+      // Logical position (bee.x/y) is unchanged — arrival/proximity checks
+      // still work cleanly. Arc damps at the start and end of the leg.
+      const startDx = bee.targetX - bee.flightStartX;
+      const startDy = bee.targetY - bee.flightStartY;
+      const flightDist = Math.hypot(startDx, startDy);
+      let arcOffsetX = 0;
+      let arcOffsetY = 0;
+      if (flightDist > 30 && bee.windupRemainingMs <= 0) {
+        const traveled = Math.hypot(bee.x - bee.flightStartX, bee.y - bee.flightStartY);
+        const progress = Math.min(1, traveled / flightDist);
+        // sin(πt) = 0→1→0: peaks at the middle of the leg.
+        const bow = Math.sin(progress * Math.PI);
+        // Per-bee amplitude variation; foragers arc more, builders straighter.
+        const roleAmp =
+          bee.role === 'forager' ? 16 : bee.role === 'wax-maker' ? 10 : 6;
+        const arcAmp = roleAmp * (1 + bee.seed * 0.4);
+        // Per-bee sign: half curve up, half curve down.
+        const arcSign = bee.seed >= 0 ? 1 : -1;
+        const perpX = -startDy / flightDist;
+        const perpY = startDx / flightDist;
+        arcOffsetX = perpX * bow * arcAmp * arcSign;
+        arcOffsetY = perpY * bow * arcAmp * arcSign;
+      }
+
+      sprite.graphics.x = bee.x + arcOffsetX;
+      sprite.graphics.y = bee.y + arcOffsetY;
+      sprite.carry.x = sprite.graphics.x;
+      sprite.carry.y = sprite.graphics.y;
 
       // Per-frame velocity components drive squash/stretch.
       const dx = bee.x - bee.prevX;

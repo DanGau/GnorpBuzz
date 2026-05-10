@@ -58,6 +58,12 @@ export class Bee {
   // Wind-up countdown — while > 0, flyToward backs away from the target
   // before launching forward (anticipation lurch).
   windupRemainingMs: number;
+  // Flight kinematics: tracked from the start of each flight leg so we can
+  // ease velocity (accelerate from rest, decelerate near target) and so
+  // BeeView can compute arc progress.
+  flightStartX: number;
+  flightStartY: number;
+  flightAgeMs: number;
   // Idle bookkeeping: how long the bee has been continuously idle, used to
   // schedule tip-over animations and "?" pops on confused idle cycles.
   idleAccumulatedMs: number;
@@ -90,6 +96,9 @@ export class Bee {
     this.steamCooldownMs = 0;
     this.trailCooldownMs = 0;
     this.windupRemainingMs = 0;
+    this.flightStartX = this.x;
+    this.flightStartY = this.y;
+    this.flightAgeMs = 0;
     this.idleAccumulatedMs = 0;
     this.consecutiveIdleResets = 0;
     this.tipPhaseMs = 0;
@@ -115,11 +124,30 @@ export class Bee {
       return false;
     }
 
+    this.flightAgeMs += dtMs;
+
     // Per-bee speed jitter (±15%) keeps the swarm from moving in lockstep.
-    let speed = TUNING.BEE_SPEED * (1 + this.seed * 0.15);
-    // Dive-bombing: wax-makers drop fast on the second leg of pollen pickup.
-    if (this.state === 'dive-bombing-pollen') speed *= 2.2;
-    const move = speed * (dtMs / 1000);
+    let baseSpeed = TUNING.BEE_SPEED * (1 + this.seed * 0.15);
+    // Dive-bomb skips easing — punchy plunge at full speed.
+    const isDive = this.state === 'dive-bombing-pollen';
+    if (isDive) baseSpeed *= 2.2;
+
+    let speedMul: number;
+    if (isDive) {
+      speedMul = 1;
+    } else {
+      // Quad.out acceleration ramp (200ms) — accelerate from rest.
+      const accelFrac = Math.min(1, this.flightAgeMs / 200);
+      const accelEase = accelFrac * (2 - accelFrac);
+      // Quad.out deceleration ramp — slow as we approach the target.
+      const decelDist = 70;
+      const decelFrac = Math.min(1, dist / decelDist);
+      const decelEase = decelFrac * (2 - decelFrac);
+      // Floor at 0.18 so we don't asymptote and never arrive.
+      speedMul = Math.max(0.18, Math.min(accelEase, decelEase));
+    }
+
+    const move = baseSpeed * speedMul * (dtMs / 1000);
     if (move >= dist) {
       this.x = this.targetX;
       this.y = this.targetY;
@@ -135,11 +163,15 @@ export class Bee {
     this.shakeUntilMs = state.elapsedMs + durationMs;
   }
 
-  /** Set a flight target with a small anticipation wind-up. */
+  /** Set a flight target with a small anticipation wind-up, and reset
+   * the flight kinematics so velocity eases from rest. */
   private setFlightTarget(x: number, y: number, windupMs = 90): void {
     this.targetX = x;
     this.targetY = y;
     this.windupRemainingMs = windupMs;
+    this.flightStartX = this.x;
+    this.flightStartY = this.y;
+    this.flightAgeMs = 0;
   }
 
   private homePos(world: World): { x: number; y: number } {
