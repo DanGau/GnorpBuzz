@@ -3,14 +3,17 @@ import type { World } from '../world/World';
 import type { GameState, ForagerHiveData, WaxHiveData } from '../sim/state';
 
 // Renders Forager Hives (with visible pollen pots) and Wax Hives (with a
-// visible cream-block stockpile that grows as pollen is converted).
+// visible cream-block stockpile). Each hive is interactive — clicking the
+// body fires the onHiveClick callback. The selected hive gets a glowing
+// halo + subtle scale pulse.
 
 interface HiveSprite {
   id: string;
   type: 'forager' | 'wax';
+  highlight: Graphics;
   body: Graphics;
-  pollenPots: Graphics; // forager-only
-  blockStockpile: Graphics; // wax-only
+  pollenPots: Graphics;
+  blockStockpile: Graphics;
   x: number;
   y: number;
 }
@@ -18,31 +21,41 @@ interface HiveSprite {
 export class HiveView {
   readonly container: Container;
   private sprites: Map<string, HiveSprite>;
+  private onHiveClick: (id: string) => void;
+  private pulse = 0;
 
-  constructor() {
+  constructor(onHiveClick: (id: string) => void) {
     this.container = new Container();
     this.sprites = new Map();
+    this.onHiveClick = onHiveClick;
   }
 
-  update(state: GameState, world: World): void {
-    // Add missing sprites
+  update(state: GameState, world: World, selectedHiveId: string | null, dtMs: number): void {
+    this.pulse += dtMs / 1000;
+
     for (const hive of world.hives.values()) {
       if (!this.sprites.has(hive.hiveId)) {
+        const highlight = new Graphics();
         const body = new Graphics();
         const pollenPots = new Graphics();
         const blockStockpile = new Graphics();
-        body.x = hive.x;
-        body.y = hive.y;
-        pollenPots.x = hive.x;
-        pollenPots.y = hive.y;
-        blockStockpile.x = hive.x;
-        blockStockpile.y = hive.y;
-        this.container.addChild(body);
-        this.container.addChild(pollenPots);
-        this.container.addChild(blockStockpile);
+        for (const g of [highlight, body, pollenPots, blockStockpile]) {
+          g.x = hive.x;
+          g.y = hive.y;
+          this.container.addChild(g);
+        }
+        // Make the body interactive — click fires selection callback.
+        body.eventMode = 'static';
+        body.cursor = 'pointer';
+        const id = hive.hiveId;
+        body.on('pointertap', (e) => {
+          e.stopPropagation();
+          this.onHiveClick(id);
+        });
         const sprite: HiveSprite = {
           id: hive.hiveId,
           type: hive.type,
+          highlight,
           body,
           pollenPots,
           blockStockpile,
@@ -53,21 +66,17 @@ export class HiveView {
         this.sprites.set(hive.hiveId, sprite);
       }
     }
-    // Remove stale
     const liveIds = new Set(Array.from(world.hives.values()).map((h) => h.hiveId));
     for (const [id, sprite] of this.sprites) {
       if (!liveIds.has(id)) {
-        this.container.removeChild(sprite.body);
-        this.container.removeChild(sprite.pollenPots);
-        this.container.removeChild(sprite.blockStockpile);
-        sprite.body.destroy();
-        sprite.pollenPots.destroy();
-        sprite.blockStockpile.destroy();
+        for (const g of [sprite.highlight, sprite.body, sprite.pollenPots, sprite.blockStockpile]) {
+          this.container.removeChild(g);
+          g.destroy();
+        }
         this.sprites.delete(id);
       }
     }
 
-    // Update dynamic visuals
     for (const sprite of this.sprites.values()) {
       const simHive = state.hives.find((h) => h.id === sprite.id);
       if (!simHive) continue;
@@ -76,14 +85,25 @@ export class HiveView {
       } else {
         this.drawBlockStockpile(sprite, (simHive as WaxHiveData).waxBlocks);
       }
+      this.drawHighlight(sprite, sprite.id === selectedHiveId);
     }
+  }
+
+  private drawHighlight(sprite: HiveSprite, selected: boolean): void {
+    const g = sprite.highlight;
+    g.clear();
+    if (!selected) return;
+    const breath = 1 + Math.sin(this.pulse * 3) * 0.08;
+    g.ellipse(0, -8, 56 * breath, 60 * breath).fill({ color: 0xfff2cf, alpha: 0.18 });
+    g.ellipse(0, -8, 44 * breath, 48 * breath).fill({ color: 0xffe680, alpha: 0.18 });
+    // Crisp outline ring at the hive base
+    g.ellipse(0, 16, 42, 8).stroke({ color: 0xffe680, width: 2, alpha: 0.9 });
   }
 
   private drawBody(sprite: HiveSprite): void {
     const g = sprite.body;
     g.clear();
     if (sprite.type === 'forager') {
-      // Forager hive: classic golden bee skep
       const bands = [
         { y: -50, w: 50, h: 18 },
         { y: -32, w: 60, h: 18 },
@@ -97,16 +117,12 @@ export class HiveView {
       }
       g.circle(0, 0, 7).fill(0x3a2a10);
     } else {
-      // Wax hive: blocky workshop with a chimney — cream/cooler tone
       g.rect(-32, -45, 64, 50).fill(0xc7a86a);
       g.rect(-32, -45, 64, 6).fill(0x8d7440);
-      // Roof slats
       for (let i = 0; i < 4; i++) {
         g.rect(-32 + i * 16, -45, 1, 50).fill({ color: 0x8d7440, alpha: 0.4 });
       }
-      // Door / opening
       g.roundRect(-8, -10, 16, 18, 2).fill(0x3a2a10);
-      // Chimney
       g.rect(12, -60, 10, 18).fill(0x8d7440);
       g.rect(11, -62, 12, 4).fill(0x6b5631);
     }
@@ -117,19 +133,15 @@ export class HiveView {
     const g = sprite.pollenPots;
     g.clear();
     if (pollen <= 0) return;
-    // Show up to 6 pots at the front of the hive; height of fill scales
     const maxVisible = 6;
     const shown = Math.min(maxVisible, pollen);
     const startX = -25;
     for (let i = 0; i < shown; i++) {
       const x = startX + i * 10;
       const y = 18;
-      // Pot
       g.roundRect(x - 4, y - 5, 8, 8, 2).fill(0x8b5a2b);
-      // Pollen fill
       g.circle(x, y - 2, 3).fill(0xf5d166);
     }
-    // Overflow indicator: small pile beside the pots
     if (pollen > maxVisible) {
       const overflow = Math.min(20, pollen - maxVisible);
       for (let i = 0; i < overflow; i++) {
@@ -144,7 +156,6 @@ export class HiveView {
     const g = sprite.blockStockpile;
     g.clear();
     if (blocks <= 0) return;
-    // Hex blocks stacked beside the wax hive
     const maxVisible = 8;
     const shown = Math.min(maxVisible, blocks);
     for (let i = 0; i < shown; i++) {

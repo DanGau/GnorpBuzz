@@ -10,6 +10,8 @@ import { VesselView } from './VesselView';
 
 export interface WorldRendererCallbacks {
   onLaunchClick: () => void;
+  onHiveClick: (hiveId: string) => void;
+  onBackgroundClick: () => void;
 }
 
 export class WorldRenderer {
@@ -23,11 +25,10 @@ export class WorldRenderer {
 
   constructor(callbacks: WorldRendererCallbacks) {
     this.root = new Container();
-    // Pixi v8: enable interaction on the root container so child hit-areas fire
     this.root.eventMode = 'static';
     this.worldView = new WorldView();
     this.flowerView = new FlowerView();
-    this.hiveView = new HiveView();
+    this.hiveView = new HiveView(callbacks.onHiveClick);
     this.beeView = new BeeView();
     this.vesselView = new VesselView(callbacks.onLaunchClick);
 
@@ -36,6 +37,10 @@ export class WorldRenderer {
     this.root.addChild(this.vesselView.container);
     this.root.addChild(this.hiveView.container);
     this.root.addChild(this.beeView.container);
+
+    // Background click (anything not consumed by hive/airplane): deselect.
+    this.worldView.container.eventMode = 'static';
+    this.worldView.container.on('pointertap', () => callbacks.onBackgroundClick());
   }
 
   attach(app: Application, parent: Container, _world: World): void {
@@ -67,9 +72,9 @@ export class WorldRenderer {
     this.fitListeners.push(cb);
   }
 
-  update(state: GameState, world: World, dtMs: number): void {
+  update(state: GameState, world: World, dtMs: number, selectedHiveId: string | null): void {
     this.flowerView.update(state, world, dtMs);
-    this.hiveView.update(state, world);
+    this.hiveView.update(state, world, selectedHiveId, dtMs);
     this.beeView.update(world);
     this.vesselView.update(state, dtMs);
   }

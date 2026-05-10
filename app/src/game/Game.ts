@@ -42,6 +42,11 @@ export class Game {
   readonly renderer: WorldRenderer;
   ui?: UI;
 
+  // UI selection state — which hive (if any) is currently focused. Drives
+  // panel visibility and the in-world building highlight. Not part of the
+  // sim, not persisted in saves.
+  selectedHiveId: string | null = null;
+
   private paused = false;
   private skipRendering = false;
   private lastDeltaMs = 16.7;
@@ -55,8 +60,23 @@ export class Game {
     this.world = new World();
     this.renderer = new WorldRenderer({
       onLaunchClick: () => this.launchVessel(),
+      onHiveClick: (hiveId: string) => this.toggleHiveSelection(hiveId),
+      onBackgroundClick: () => this.selectHive(null),
     });
     this.world.reconcile(this.state);
+  }
+
+  // ---- UI state ----
+
+  selectHive(hiveId: string | null): void {
+    if (this.selectedHiveId === hiveId) return;
+    this.selectedHiveId = hiveId;
+    this.observer.emit();
+    if (this.ui) this.ui.update();
+  }
+
+  toggleHiveSelection(hiveId: string): void {
+    this.selectHive(this.selectedHiveId === hiveId ? null : hiveId);
   }
 
   async init(mount: HTMLElement): Promise<void> {
@@ -83,7 +103,7 @@ export class Game {
     launchSystem(this.state, dtMs);
     journalSystem(this.state);
     this.lastDeltaMs = dtMs;
-    this.renderer.update(this.state, this.world, dtMs);
+    this.renderer.update(this.state, this.world, dtMs, this.selectedHiveId);
     if (this.ui) this.ui.update();
   }
 
@@ -155,7 +175,7 @@ export class Game {
   render(): void {
     if (this.skipRendering) return;
     this.world.reconcile(this.state);
-    this.renderer.update(this.state, this.world, this.lastDeltaMs);
+    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedHiveId);
     this.app.renderer.render(this.app.stage);
   }
 
@@ -219,6 +239,8 @@ export class Game {
       dismissJournal: () => this.dismissJournal(),
       resetGame: () => this.resetGame(),
       worldSnapshot: () => this.world.snapshot(),
+      selectHive: (id: string | null) => this.selectHive(id),
+      selectedHive: () => this.selectedHiveId,
     };
     (window as unknown as { debug: typeof dbg }).debug = dbg;
   }

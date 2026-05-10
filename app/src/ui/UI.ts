@@ -6,10 +6,6 @@ import { JournalModal } from './JournalModal';
 import { EndBanner } from './EndBanner';
 import { WORLD } from '../world/layout';
 
-// Top-level HTML overlay. Mounts widgets into #ui and updates them every
-// frame from Game state. Per-hive control panels are positioned in world
-// space (anchored above their hive) and re-positioned on canvas resize.
-
 export class UI {
   private widgets: { update(): void }[];
   private hivePanels: HiveControlPanel[];
@@ -22,21 +18,25 @@ export class UI {
     const journal = new JournalModal(game);
     const endBanner = new EndBanner(game);
 
-    // Per-hive panels — anchored just above the top of each hive.
+    // Hive panels are anchored just above the hive's top edge in world space.
+    // The hive bodies extend ~50px above their slot center, so anchor at
+    // slot.y - 56 → panel sits with its bottom 6px above the hive top.
+    const ANCHOR_OFFSET = 56;
     const foragerSlot = WORLD.HIVE_SLOTS[0];
     const waxSlot = WORLD.HIVE_SLOTS[1];
-    const HIVE_TOP_OFFSET = 70; // hive sprites stand ~50px tall; sit panel above
     const foragerPanel = new HiveControlPanel(
       game,
       'forager',
+      'forager-hive',
       foragerSlot.x,
-      foragerSlot.y - HIVE_TOP_OFFSET,
+      foragerSlot.y - ANCHOR_OFFSET,
     );
     const waxPanel = new HiveControlPanel(
       game,
       'wax',
+      'wax-hive',
       waxSlot.x,
-      waxSlot.y - HIVE_TOP_OFFSET,
+      waxSlot.y - ANCHOR_OFFSET,
     );
 
     mount.appendChild(resourceBar.el);
@@ -49,7 +49,6 @@ export class UI {
     this.hivePanels = [foragerPanel, waxPanel];
     this.widgets = [resourceBar, foragerPanel, waxPanel, vesselProgress, journal, endBanner];
 
-    // Reposition hive panels on canvas resize.
     game.renderer.onFit(() => this.repositionHivePanels());
     this.repositionHivePanels();
     this.update();
