@@ -59,14 +59,18 @@ export class BeeView {
       if (flightDist > 30 && bee.windupRemainingMs <= 0) {
         const traveled = Math.hypot(bee.x - bee.flightStartX, bee.y - bee.flightStartY);
         const progress = Math.min(1, traveled / flightDist);
-        const bow = Math.sin(progress * Math.PI);
-        // Per-role amplitude: foragers swoop most, wax-makers moderate,
-        // builders straighter. Bumped from earlier values so the curve
-        // actually reads as "bee not flying straight" instead of subtle.
+        // Multi-bow path: bee weaves across the travel line N times where
+        // N is per-bee (2–5 bows). Outer envelope sin(π·t) keeps the path
+        // pinched at start and end so flights still launch and land clean.
+        const numBows = 2 + Math.floor(Math.abs(bee.seed) * 4); // 2–5
+        const inner = Math.sin(progress * Math.PI * numBows);
+        const envelope = Math.sin(progress * Math.PI);
+        const bow = inner * envelope;
+        // Per-role amplitude (3× the previous values).
         const roleAmp =
-          bee.role === 'forager' ? 28 : bee.role === 'wax-maker' ? 18 : 12;
-        const arcAmp = roleAmp * (1 + bee.seed * 0.4);
-        // Per-bee sign: half curve up, half curve down.
+          bee.role === 'forager' ? 84 : bee.role === 'wax-maker' ? 54 : 36;
+        const arcAmp = roleAmp * (1 + bee.seed * 0.3);
+        // Per-bee sign for which side the first bow goes.
         const arcSign = bee.seed >= 0 ? 1 : -1;
         const perpX = -startDy / flightDist;
         const perpY = startDx / flightDist;
