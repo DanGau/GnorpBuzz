@@ -63,7 +63,7 @@ export type BeeState =
   | 'dropping-block'
   | 'flying-home-empty';
 
-export type BeeCarrying = 'none' | 'pollen' | 'wax-block';
+export type BeeCarrying = 'none' | 'pollen' | 'nectar' | 'wax-block';
 
 const ARRIVE_THRESHOLD = 4;
 const IDLE_WANDER_RADIUS = 30;
@@ -308,8 +308,8 @@ export class Bee {
             }
             world.particles.emit('sparkle', this.x, this.y - 4, 1);
           }
+          this.carrying = flower && flower.kind === 'nectar' ? 'nectar' : 'pollen';
           this.targetFlowerId = null;
-          this.carrying = 'pollen';
           const fs = statsFor('forager', state);
           this.carryAmount = fs.carryAmount;
           const home = this.homePos(world);
@@ -329,9 +329,12 @@ export class Bee {
         if (this.flyToward(dtMs, state)) {
           const hive = state.hives.find((h) => h.id === this.homeHiveId);
           if (hive && hive.type === 'forager') {
-            (hive as ForagerHiveData).pollen += this.carryAmount;
+            if (this.carrying === 'nectar') {
+              (hive as ForagerHiveData).nectar += this.carryAmount;
+            } else {
+              (hive as ForagerHiveData).pollen += this.carryAmount;
+            }
           }
-          // Toss-overhead deposit: fan of pollen particles, count scales w/ load.
           world.particles.emit('pollenPuff', this.x, this.y, 4 + this.carryAmount * 2);
           this.pulseShake(state);
           this.carrying = 'none';

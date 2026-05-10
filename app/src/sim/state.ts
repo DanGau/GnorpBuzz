@@ -138,6 +138,7 @@ export interface ForagerHiveData {
   built: boolean;
   bees: number;
   pollen: number;
+  nectar: number; // accumulated from nectar flowers (Phase 2+)
 }
 
 export interface WaxHiveData {
@@ -157,8 +158,11 @@ export interface BuilderHiveData {
 
 export type HiveData = ForagerHiveData | WaxHiveData | BuilderHiveData;
 
+export type FlowerKind = 'pollen' | 'nectar';
+
 export interface FlowerData {
   id: string;
+  kind: FlowerKind;
   yieldRemaining: number;
   regrowTimerMs: number;
   claimedByBeeId: string | null;
@@ -170,22 +174,41 @@ export interface JournalEntry {
   text: string;
 }
 
+export interface VesselTierConfig {
+  tier: number;
+  name: string;
+  shape: 'airplane' | 'balloon' | 'propeller' | 'jet';
+  blockCost: number;
+  nectarCost: number;
+}
+
+export const VESSEL_TIERS: VesselTierConfig[] = [
+  { tier: 1, name: 'Paper Airplane', shape: 'airplane', blockCost: 8, nectarCost: 0 },
+  { tier: 2, name: 'Hot Air Balloon', shape: 'balloon', blockCost: 20, nectarCost: 0 },
+  { tier: 3, name: 'Propeller Plane', shape: 'propeller', blockCost: 30, nectarCost: 5 },
+  { tier: 4, name: 'Jet', shape: 'jet', blockCost: 60, nectarCost: 15 },
+];
+
 export interface GameState {
   tick: number;
   elapsedMs: number;
   hives: HiveData[];
   flowers: FlowerData[];
   vessel: {
+    tier: number; // 1-based vessel tier
     deliveredBlocks: number;
     requiredBlocks: number;
+    requiredNectar: number;
     phase: VesselPhase;
     launchTimer: number;
   };
   journal: { entries: JournalEntry[]; pending: boolean; dismissedCount: number };
   upgrades: Partial<Record<UpgradeId, number>>;
-  // Number of times a vessel has launched (post-dismiss). Used to pick the
-  // next journal entry from the predefined sequence.
   launchCount: number;
+  // Nectar mechanics — unlocked once the player has crashed Tier 2 (i.e.,
+  // dismissed >= 2 journal entries). Some flowers transform into nectar
+  // flowers when this flips true.
+  nectarUnlocked: boolean;
 }
 
 export const TUNING = {
@@ -213,37 +236,49 @@ export const TUNING = {
 } as const;
 
 const FLOWER_COUNT = 8;
+// When nectar unlocks, these flower indices transform to nectar kind.
+export const NECTAR_FLOWER_INDICES = [0, 3, 6];
 
 export function createInitialState(): GameState {
   const flowers: FlowerData[] = [];
   for (let i = 0; i < FLOWER_COUNT; i++) {
     flowers.push({
       id: `flower-${i}`,
+      kind: 'pollen',
       yieldRemaining: TUNING.FLOWER_YIELD,
       regrowTimerMs: 0,
       claimedByBeeId: null,
     });
   }
+  const tier1 = VESSEL_TIERS[0];
   return {
     tick: 0,
     elapsedMs: 0,
-    // Order matches the slot order in world/layout.ts.
     hives: [
-      { id: 'forager-hive', type: 'forager', built: true, bees: 0, pollen: 0 },
+      { id: 'forager-hive', type: 'forager', built: true, bees: 0, pollen: 0, nectar: 0 },
       { id: 'builder-hive', type: 'builder', built: false, bees: 0 },
       { id: 'wax-hive', type: 'wax', built: false, bees: 0, waxBlocks: 0 },
     ],
     flowers,
     vessel: {
+      tier: tier1.tier,
       deliveredBlocks: 0,
-      requiredBlocks: TUNING.VESSEL_BLOCKS_REQUIRED,
+      requiredBlocks: tier1.blockCost,
+      requiredNectar: tier1.nectarCost,
       phase: 'building',
       launchTimer: 0,
     },
     journal: { entries: [], pending: false, dismissedCount: 0 },
     upgrades: {},
     launchCount: 0,
+    nectarUnlocked: false,
   };
+}
+
+export function vesselTierConfig(tier: number): VesselTierConfig {
+  // Cap at last tier; future tiers can loop or extend the array.
+  const idx = Math.min(VESSEL_TIERS.length - 1, Math.max(0, tier - 1));
+  return VESSEL_TIERS[idx];
 }
 
 // ---- Upgrade helpers ----
@@ -314,6 +349,10 @@ export function totalBees(state: GameState): number {
 
 export function totalPollen(state: GameState): number {
   return state.hives.reduce((sum, h) => sum + (h.type === 'forager' ? h.pollen : 0), 0);
+}
+
+export function totalNectar(state: GameState): number {
+  return state.hives.reduce((sum, h) => sum + (h.type === 'forager' ? h.nectar : 0), 0);
 }
 
 export function spendableWax(state: GameState): number {

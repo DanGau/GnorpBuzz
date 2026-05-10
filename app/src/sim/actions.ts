@@ -10,6 +10,9 @@ import {
   getUpgradeTier,
   isUpgradeUnlocked,
   nextUpgradeCost,
+  vesselTierConfig,
+  VESSEL_TIERS,
+  NECTAR_FLOWER_INDICES,
 } from './state';
 
 export interface ActionResult {
@@ -126,8 +129,22 @@ export function launchVessel(state: GameState): ActionResult {
   if (state.vessel.phase !== 'ready') {
     return { ok: false, reason: 'Vessel not ready' };
   }
+  // Consume the required nectar from forager hives (largest first).
+  let remaining = state.vessel.requiredNectar;
+  if (remaining > 0) {
+    const foragerHives = state.hives
+      .filter((h): h is ForagerHiveData => h.type === 'forager')
+      .sort((a, b) => b.nectar - a.nectar);
+    for (const h of foragerHives) {
+      if (remaining <= 0) break;
+      const take = Math.min(h.nectar, remaining);
+      h.nectar -= take;
+      remaining -= take;
+    }
+  }
   state.vessel.phase = 'launching';
   state.vessel.launchTimer = 0;
+  state.launchCount += 1;
   return { ok: true };
 }
 
@@ -135,11 +152,27 @@ export function dismissJournal(state: GameState): ActionResult {
   if (!state.journal.pending) return { ok: false, reason: 'No pending journal entry' };
   state.journal.pending = false;
   state.journal.dismissedCount += 1;
-  // Reset the vessel for another launch instead of ending the prototype.
-  // Each new launch + journal entry unlocks the next upgrade tier.
-  state.vessel.phase = 'building';
+
+  // Phase 1 → 2 transition: after the second dismissed entry (i.e., Tier 2
+  // crashed), some flowers transform into nectar flowers and the new
+  // resource appears in the resource bar.
+  if (!state.nectarUnlocked && state.journal.dismissedCount >= 2) {
+    state.nectarUnlocked = true;
+    for (const idx of NECTAR_FLOWER_INDICES) {
+      if (state.flowers[idx]) state.flowers[idx].kind = 'nectar';
+    }
+  }
+
+  // Advance to the next vessel tier (capped by the table). Reset block
+  // counter and recompute requirements.
+  const nextTier = Math.min(VESSEL_TIERS.length, state.vessel.tier + 1);
+  const cfg = vesselTierConfig(nextTier);
+  state.vessel.tier = nextTier;
+  state.vessel.requiredBlocks = cfg.blockCost;
+  state.vessel.requiredNectar = cfg.nectarCost;
   state.vessel.deliveredBlocks = 0;
   state.vessel.launchTimer = 0;
+  state.vessel.phase = 'building';
   return { ok: true };
 }
 

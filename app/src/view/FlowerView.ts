@@ -57,32 +57,42 @@ export class FlowerView {
 
   private drawFlower(
     sprite: FlowerSprite,
-    sim: { yieldRemaining: number; regrowTimerMs: number } | undefined,
+    sim:
+      | { yieldRemaining: number; regrowTimerMs: number; kind?: 'pollen' | 'nectar' }
+      | undefined,
   ): void {
     const g = sprite.graphics;
     g.clear();
-    const color = PETAL_COLORS[sprite.hue % PETAL_COLORS.length];
+    const isNectar = sim?.kind === 'nectar';
+    // Nectar flowers wear cool blue/cyan petals; pollen flowers cycle the
+    // warmer palette by hue index.
+    const color = isNectar
+      ? [0x66c8ff, 0x88a8ff, 0x66ffe0][sprite.hue % 3]
+      : PETAL_COLORS[sprite.hue % PETAL_COLORS.length];
+    const coreColor = isNectar ? 0xffffff : 0xffe066;
     const yieldNow = sim?.yieldRemaining ?? TUNING.FLOWER_YIELD;
     const regrowFrac = sim ? 1 - sim.regrowTimerMs / TUNING.FLOWER_REGROW_MS : 1;
 
     if (yieldNow === 0) {
-      // Wilted stem; small regrowth indicator that fills as timer counts down
       g.roundRect(sprite.x - 1, sprite.y - 4, 2, 12, 1).fill(0x556633);
       const r = 1 + 3 * Math.max(0, Math.min(1, regrowFrac));
-      g.circle(sprite.x, sprite.y - 4, r).fill({ color: 0x6e8b3a, alpha: 0.7 });
+      g.circle(sprite.x, sprite.y - 4, r).fill({ color: isNectar ? 0x6699bb : 0x6e8b3a, alpha: 0.7 });
       return;
     }
 
-    // Petal count scales down as yield depletes (5→4→3→2→1 petals)
     const petalCount = Math.max(1, Math.min(5, yieldNow));
-    const r = 6;
+    const r = isNectar ? 7 : 6;
     for (let i = 0; i < petalCount; i++) {
       const a = (i / petalCount) * Math.PI * 2;
       const px = sprite.x + Math.cos(a) * r;
       const py = sprite.y + Math.sin(a) * r;
-      g.circle(px, py, 5).fill(color);
+      g.circle(px, py, isNectar ? 5.5 : 5).fill(color);
     }
-    g.circle(sprite.x, sprite.y, 4).fill(0xffe066);
+    if (isNectar) {
+      // Faint inner glow so nectar flowers feel special.
+      g.circle(sprite.x, sprite.y, 6).fill({ color: 0xb0e0ff, alpha: 0.35 });
+    }
+    g.circle(sprite.x, sprite.y, 4).fill(coreColor);
   }
 
   private drawSkyFlower(): void {

@@ -161,12 +161,16 @@ export class BeeView {
     g.ellipse(2, -4, 4, 2.5).fill({ color: 0xffffff, alpha: 0.6 });
   }
 
-  private drawCarry(g: Graphics, carrying: 'none' | 'pollen' | 'wax-block'): void {
+  private drawCarry(g: Graphics, carrying: 'none' | 'pollen' | 'nectar' | 'wax-block'): void {
     g.clear();
     if (carrying === 'none') return;
     if (carrying === 'pollen') {
       g.circle(0, 4, 3).fill(0xf5d166);
       g.circle(-1, 3, 1).fill({ color: 0xfff2bf, alpha: 0.6 });
+    } else if (carrying === 'nectar') {
+      // Cyan-blue droplet for nectar.
+      g.circle(0, 4, 3).fill(0x66c8ff);
+      g.circle(-1, 3, 1).fill({ color: 0xd0eaff, alpha: 0.8 });
     } else if (carrying === 'wax-block') {
       const r = 4;
       const pts: number[] = [];

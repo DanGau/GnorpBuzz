@@ -1,6 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import type { GameState } from '../sim/state';
-import { TUNING } from '../sim/state';
+import { TUNING, vesselTierConfig } from '../sim/state';
 import { WORLD } from '../world/layout';
 import type { World } from '../world/World';
 
@@ -74,7 +74,7 @@ export class VesselView {
       const breath = 1 + Math.sin(this.pulse * 3) * 0.08;
       this.hint.circle(PAD.x, PAD.y - 4, 70 * breath).fill({ color: 0xfff2cf, alpha: 0.18 });
       this.hint.circle(PAD.x, PAD.y - 4, 50 * breath).fill({ color: 0xffe680, alpha: 0.22 });
-      this.drawAirplane(1);
+      this.drawVessel(state, 1);
       this.airplane.x = PAD.x;
       this.airplane.y = PAD.y - 4;
       this.airplane.rotation = -0.08;
@@ -128,7 +128,7 @@ export class VesselView {
       scale = 0.95;
     }
 
-    this.drawAirplane(scale);
+    this.drawVessel(state, scale);
     this.airplane.x = x;
     this.airplane.y = y;
     this.airplane.rotation = rotation;
@@ -175,13 +175,85 @@ export class VesselView {
     }
   }
 
-  private drawAirplane(scale: number): void {
+  private drawVessel(state: GameState, scale: number): void {
+    const cfg = vesselTierConfig(state.vessel.tier);
     const g = this.airplane;
     const s = scale;
+    switch (cfg.shape) {
+      case 'airplane':
+        this.drawAirplane(g, s);
+        break;
+      case 'balloon':
+        this.drawBalloon(g, s);
+        break;
+      case 'propeller':
+        this.drawPropeller(g, s);
+        break;
+      case 'jet':
+        this.drawJet(g, s);
+        break;
+    }
+  }
+
+  private drawAirplane(g: Graphics, s: number): void {
     g.poly([40 * s, 0, -30 * s, -18 * s, -10 * s, 0, -30 * s, 18 * s])
       .fill(0xfaf6e8)
       .stroke({ color: 0x6e6240, width: 2 });
     g.moveTo(40 * s, 0).lineTo(-30 * s, 0).stroke({ color: 0x9a8d65, width: 1 });
+  }
+
+  private drawBalloon(g: Graphics, s: number): void {
+    // Round envelope
+    g.circle(0, -30 * s, 34 * s).fill(0xff8b3a).stroke({ color: 0x8a3a18, width: 2 });
+    // Striped panels (vertical wedges)
+    g.poly([0, -64 * s, -12 * s, -30 * s, 12 * s, -30 * s]).fill({ color: 0xffd23f, alpha: 0.85 });
+    g.poly([0, 4 * s, -12 * s, -30 * s, 12 * s, -30 * s]).fill({ color: 0xffd23f, alpha: 0.85 });
+    // Ropes
+    g.moveTo(-22 * s, -10 * s).lineTo(-14 * s, 14 * s).stroke({ color: 0x4a3520, width: 1.5 });
+    g.moveTo(22 * s, -10 * s).lineTo(14 * s, 14 * s).stroke({ color: 0x4a3520, width: 1.5 });
+    // Basket
+    g.rect(-16 * s, 14 * s, 32 * s, 16 * s).fill(0x8a5a2b).stroke({ color: 0x4a3520, width: 1.5 });
+  }
+
+  private drawPropeller(g: Graphics, s: number): void {
+    // Fuselage
+    g.roundRect(-32 * s, -6 * s, 56 * s, 14 * s, 6).fill(0xc5d5e0).stroke({ color: 0x4a5560, width: 2 });
+    // Cockpit window
+    g.circle(10 * s, -2 * s, 4 * s).fill(0x6ab0e0);
+    // Wings (horizontal)
+    g.rect(-20 * s, -2 * s, 36 * s, 4 * s).fill(0xa0b0c0);
+    // Tail fin
+    g.poly([-32 * s, -6 * s, -38 * s, -16 * s, -28 * s, -6 * s]).fill(0xa0b0c0);
+    // Propeller — spinning illusion: two crossed blades
+    g.rect(22 * s, -1 * s, 8 * s, 2 * s).fill(0x4a3520);
+    const spin = (this.pulse * 12) % 1;
+    const a = spin * Math.PI;
+    g.rect(28 * s - 1, -10 * s, 2, 20 * s).fill({ color: 0x6e5a3a, alpha: 1 - spin });
+    const cy = Math.sin(a) * 10 * s;
+    g.rect(28 * s - 1, cy - 1, 2, 2).fill(0x4a3520);
+  }
+
+  private drawJet(g: Graphics, s: number): void {
+    // Sleek body
+    g.poly([
+      40 * s, 0,
+      30 * s, -8 * s,
+      -28 * s, -10 * s,
+      -34 * s, -4 * s,
+      -34 * s, 4 * s,
+      -28 * s, 10 * s,
+      30 * s, 8 * s,
+    ]).fill(0xb8c4cc).stroke({ color: 0x4a5560, width: 2 });
+    // Cockpit
+    g.circle(20 * s, -2 * s, 4 * s).fill(0x6ab0e0);
+    // Swept wings (delta-ish)
+    g.poly([-6 * s, -8 * s, -20 * s, -22 * s, 4 * s, -10 * s]).fill(0x8a98a6);
+    g.poly([-6 * s, 8 * s, -20 * s, 22 * s, 4 * s, 10 * s]).fill(0x8a98a6);
+    // Tail fin
+    g.poly([-28 * s, -8 * s, -36 * s, -22 * s, -22 * s, -10 * s]).fill(0x8a98a6);
+    // Afterburner glow
+    g.circle(-34 * s, 0, 4 * s).fill({ color: 0xff8855, alpha: 0.7 });
+    g.circle(-34 * s, 0, 2 * s).fill(0xffe680);
   }
 }
 

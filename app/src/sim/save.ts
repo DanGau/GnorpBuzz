@@ -29,6 +29,21 @@ export function deserialize(blob: string): GameState {
   }
   if (!merged.upgrades) merged.upgrades = {};
   if (typeof merged.launchCount !== 'number') merged.launchCount = 0;
+  // Migrations for Phase 2: vessel.tier, vessel.requiredNectar,
+  // hive.nectar, flower.kind, nectarUnlocked.
+  if (typeof merged.nectarUnlocked !== 'boolean') merged.nectarUnlocked = false;
+  if (typeof merged.vessel.tier !== 'number') merged.vessel.tier = 1;
+  if (typeof merged.vessel.requiredNectar !== 'number') merged.vessel.requiredNectar = 0;
+  for (const h of merged.hives) {
+    if (h.type === 'forager' && typeof h.nectar !== 'number') {
+      (h as { nectar?: number }).nectar = 0;
+    }
+  }
+  for (const f of merged.flowers) {
+    if (!('kind' in f) || (f.kind !== 'pollen' && f.kind !== 'nectar')) {
+      f.kind = 'pollen';
+    }
+  }
   return merged;
 }
 
