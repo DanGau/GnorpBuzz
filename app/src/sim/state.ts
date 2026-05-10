@@ -4,6 +4,125 @@
 
 export type Currency = 'pollen' | 'wax';
 
+// Per-role upgrade paths. Tier N is unlocked by N dismissed journal entries.
+// Stacking: each path is its own family — tiers within stack additively
+// (per docs/dps-model.md), and we read the family count directly. Across
+// roles the families are independent (not multiplicative for now).
+export type UpgradeId =
+  | 'forager-swift-wings'
+  | 'forager-quick-forage'
+  | 'forager-pollen-pouches'
+  | 'waxmaker-stoked-furnace'
+  | 'waxmaker-quick-pickup'
+  | 'waxmaker-big-batches'
+  | 'builder-strong-wings'
+  | 'builder-quick-drops'
+  | 'builder-heavy-lifters';
+
+export interface UpgradeDef {
+  id: UpgradeId;
+  role: HiveType;
+  name: string;
+  blurb: string;
+  maxTier: number;
+  baseCost: number;
+  costGrowth: number;
+  currency: Currency;
+}
+
+export const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
+  'forager-swift-wings': {
+    id: 'forager-swift-wings',
+    role: 'forager',
+    name: 'Swift Wings',
+    blurb: '+15% flight speed',
+    maxTier: 5,
+    baseCost: 4,
+    costGrowth: 1.6,
+    currency: 'pollen',
+  },
+  'forager-quick-forage': {
+    id: 'forager-quick-forage',
+    role: 'forager',
+    name: 'Quick Forage',
+    blurb: '−20% harvest time',
+    maxTier: 3,
+    baseCost: 5,
+    costGrowth: 1.7,
+    currency: 'pollen',
+  },
+  'forager-pollen-pouches': {
+    id: 'forager-pollen-pouches',
+    role: 'forager',
+    name: 'Pollen Pouches',
+    blurb: '+1 pollen carried per trip',
+    maxTier: 3,
+    baseCost: 8,
+    costGrowth: 1.8,
+    currency: 'pollen',
+  },
+  'waxmaker-stoked-furnace': {
+    id: 'waxmaker-stoked-furnace',
+    role: 'wax',
+    name: 'Stoked Furnace',
+    blurb: '−15% production time',
+    maxTier: 5,
+    baseCost: 6,
+    costGrowth: 1.6,
+    currency: 'pollen',
+  },
+  'waxmaker-quick-pickup': {
+    id: 'waxmaker-quick-pickup',
+    role: 'wax',
+    name: 'Quick Pickup',
+    blurb: '−30% pickup time',
+    maxTier: 3,
+    baseCost: 5,
+    costGrowth: 1.6,
+    currency: 'pollen',
+  },
+  'waxmaker-big-batches': {
+    id: 'waxmaker-big-batches',
+    role: 'wax',
+    name: 'Big Batches',
+    blurb: '+1 wax block per cycle',
+    maxTier: 3,
+    baseCost: 10,
+    costGrowth: 1.8,
+    currency: 'pollen',
+  },
+  'builder-strong-wings': {
+    id: 'builder-strong-wings',
+    role: 'builder',
+    name: 'Strong Wings',
+    blurb: '+15% flight speed',
+    maxTier: 5,
+    baseCost: 3,
+    costGrowth: 1.6,
+    currency: 'wax',
+  },
+  'builder-quick-drops': {
+    id: 'builder-quick-drops',
+    role: 'builder',
+    name: 'Quick Drops',
+    blurb: '−30% pickup + drop time',
+    maxTier: 3,
+    baseCost: 4,
+    costGrowth: 1.6,
+    currency: 'wax',
+  },
+  'builder-heavy-lifters': {
+    id: 'builder-heavy-lifters',
+    role: 'builder',
+    name: 'Heavy Lifters',
+    blurb: '+1 wax block carried per trip',
+    maxTier: 3,
+    baseCost: 6,
+    costGrowth: 1.8,
+    currency: 'wax',
+  },
+};
+
 export type VesselPhase =
   | 'building'
   | 'ready'
@@ -62,7 +181,11 @@ export interface GameState {
     phase: VesselPhase;
     launchTimer: number;
   };
-  journal: { entries: JournalEntry[]; pending: boolean };
+  journal: { entries: JournalEntry[]; pending: boolean; dismissedCount: number };
+  upgrades: Partial<Record<UpgradeId, number>>;
+  // Number of times a vessel has launched (post-dismiss). Used to pick the
+  // next journal entry from the predefined sequence.
+  launchCount: number;
 }
 
 export const TUNING = {
@@ -117,8 +240,36 @@ export function createInitialState(): GameState {
       phase: 'building',
       launchTimer: 0,
     },
-    journal: { entries: [], pending: false },
+    journal: { entries: [], pending: false, dismissedCount: 0 },
+    upgrades: {},
+    launchCount: 0,
   };
+}
+
+// ---- Upgrade helpers ----
+
+export function getUpgradeTier(state: GameState, id: UpgradeId): number {
+  return state.upgrades[id] ?? 0;
+}
+
+/** A tier is unlocked once at least `tier` journal entries have been dismissed. */
+export function isUpgradeUnlocked(state: GameState, id: UpgradeId): boolean {
+  const def = UPGRADE_DEFS[id];
+  const currentTier = getUpgradeTier(state, id);
+  if (currentTier >= def.maxTier) return false; // already maxed
+  // Next tier (currentTier + 1) requires (currentTier + 1) journal entries.
+  return state.journal.dismissedCount >= currentTier + 1;
+}
+
+export function nextUpgradeCost(state: GameState, id: UpgradeId): number {
+  const def = UPGRADE_DEFS[id];
+  const tier = getUpgradeTier(state, id);
+  if (tier >= def.maxTier) return 0;
+  return Math.ceil(def.baseCost * Math.pow(def.costGrowth, tier));
+}
+
+export function upgradesForRole(role: HiveType): UpgradeDef[] {
+  return Object.values(UPGRADE_DEFS).filter((u) => u.role === role);
 }
 
 export function getForagerHive(state: GameState): ForagerHiveData {

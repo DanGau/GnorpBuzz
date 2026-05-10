@@ -8,12 +8,13 @@ import {
   getForagerHive,
   getWaxHive,
   getBuilderHive,
+  upgradesForRole,
+  getUpgradeTier,
+  isUpgradeUnlocked,
+  nextUpgradeCost,
+  UPGRADE_DEFS,
 } from '../sim/state';
-import type { HiveType } from '../sim/state';
-
-// HTML control panel anchored above its hive in world space. Hidden by
-// default; shown when the hive is the selected target. Switches between
-// "Build [hive]" mode (when unbuilt) and "Hire [bee]" mode (when built).
+import type { HiveType, UpgradeId } from '../sim/state';
 
 export class HiveControlPanel {
   readonly el: HTMLDivElement;
@@ -22,6 +23,13 @@ export class HiveControlPanel {
   private titleEl: HTMLSpanElement;
   private costEl: HTMLSpanElement;
   private button: HTMLButtonElement;
+  private upgradeList: HTMLDivElement;
+  private upgradeRows: Map<UpgradeId, {
+    row: HTMLDivElement;
+    tierEl: HTMLSpanElement;
+    costEl: HTMLSpanElement;
+    button: HTMLButtonElement;
+  }>;
 
   constructor(
     private game: Game,
@@ -31,6 +39,7 @@ export class HiveControlPanel {
     private worldY: number,
   ) {
     this.hiveId = hiveId;
+    this.upgradeRows = new Map();
     this.el = document.createElement('div');
     this.el.className = `hive-control panel hive-${type} hidden`;
     this.el.innerHTML = `
@@ -41,6 +50,7 @@ export class HiveControlPanel {
       <div class="body">
         <div class="cost-row">Next: <span class="cost-num">FREE</span></div>
         <button class="build" type="button"></button>
+        <div class="upgrade-list"></div>
       </div>
       <div class="caret"></div>
     `;
@@ -48,6 +58,7 @@ export class HiveControlPanel {
     this.headerCount = this.el.querySelector('.count')! as HTMLSpanElement;
     this.costEl = this.el.querySelector('.cost-num')! as HTMLSpanElement;
     this.button = this.el.querySelector('.build')! as HTMLButtonElement;
+    this.upgradeList = this.el.querySelector('.upgrade-list')! as HTMLDivElement;
 
     this.button.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -59,6 +70,36 @@ export class HiveControlPanel {
       }
     });
     this.el.addEventListener('click', (e) => e.stopPropagation());
+
+    // Build the upgrade rows once. Visibility / state updates each frame.
+    for (const def of upgradesForRole(this.type)) {
+      const row = document.createElement('div');
+      row.className = 'upgrade-row';
+      row.innerHTML = `
+        <div class="up-info">
+          <div class="up-name"></div>
+          <div class="up-blurb"></div>
+        </div>
+        <div class="up-action">
+          <div class="up-tier"></div>
+          <button class="up-btn" type="button"></button>
+        </div>
+      `;
+      (row.querySelector('.up-name') as HTMLDivElement).textContent = def.name;
+      (row.querySelector('.up-blurb') as HTMLDivElement).textContent = def.blurb;
+      const btn = row.querySelector('.up-btn') as HTMLButtonElement;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.game.buyUpgrade(def.id);
+      });
+      this.upgradeList.appendChild(row);
+      this.upgradeRows.set(def.id, {
+        row,
+        tierEl: row.querySelector('.up-tier') as HTMLSpanElement,
+        costEl: btn,
+        button: btn,
+      });
+    }
   }
 
   reposition(screenX: number, screenY: number): void {
@@ -78,7 +119,6 @@ export class HiveControlPanel {
     this.el.classList.toggle('hidden', !visible);
 
     if (!hive.built) {
-      // Build mode
       const bc = buildCost(this.type)!;
       const buildLabel =
         this.type === 'wax' ? 'Build Wax Hive' : 'Build Builder Hive';
@@ -92,8 +132,9 @@ export class HiveControlPanel {
           ? totalPollen(this.game.state)
           : spendableWax(this.game.state);
       this.button.disabled = have < bc.amount;
+      // Hide upgrades for unbuilt hives.
+      this.upgradeList.style.display = 'none';
     } else {
-      // Hire mode
       const cost = nextBeeCost(this.game.state, this.type);
       const currency = costCurrency(this.type);
       const title =
@@ -117,6 +158,34 @@ export class HiveControlPanel {
           ? totalPollen(this.game.state)
           : spendableWax(this.game.state);
       this.button.disabled = cost > 0 && have < cost;
+      this.upgradeList.style.display = '';
+
+      // Update each upgrade row.
+      for (const def of upgradesForRole(this.type)) {
+        const row = this.upgradeRows.get(def.id)!;
+        const tier = getUpgradeTier(this.game.state, def.id);
+        const unlocked = isUpgradeUnlocked(this.game.state, def.id);
+        row.tierEl.textContent = `${tier}/${def.maxTier}`;
+        if (tier >= def.maxTier) {
+          row.button.textContent = 'MAX';
+          row.button.disabled = true;
+          row.row.classList.remove('locked');
+        } else if (!unlocked) {
+          row.button.textContent = 'Locked';
+          row.button.disabled = true;
+          row.row.classList.add('locked');
+        } else {
+          row.row.classList.remove('locked');
+          const upgradeCost = nextUpgradeCost(this.game.state, def.id);
+          const def2 = UPGRADE_DEFS[def.id];
+          const haveU =
+            def2.currency === 'pollen'
+              ? totalPollen(this.game.state)
+              : spendableWax(this.game.state);
+          row.button.textContent = `${upgradeCost} ${def2.currency}`;
+          row.button.disabled = haveU < upgradeCost;
+        }
+      }
     }
   }
 

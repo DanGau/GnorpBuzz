@@ -141,14 +141,18 @@ describe('actions', () => {
     expect(s.vessel.phase).toBe('building');
   });
 
-  it('dismissJournal closes a pending entry', () => {
+  it('dismissJournal closes a pending entry and resets the vessel', () => {
     const s = createInitialState();
     s.journal.pending = true;
     s.journal.entries.push({ id: 'e1', tier: 1, text: 'test' });
+    s.vessel.deliveredBlocks = 8;
+    s.vessel.phase = 'crashed';
     const result = dismissJournal(s);
     expect(result.ok).toBe(true);
     expect(s.journal.pending).toBe(false);
-    expect(s.vessel.phase).toBe('reviewed');
+    expect(s.journal.dismissedCount).toBe(1);
+    expect(s.vessel.phase).toBe('building');
+    expect(s.vessel.deliveredBlocks).toBe(0);
   });
 });
 

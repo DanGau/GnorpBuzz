@@ -1,4 +1,4 @@
-import type { GameState, HiveType, ForagerHiveData } from './state';
+import type { GameState, HiveType, ForagerHiveData, UpgradeId } from './state';
 import {
   nextBeeCost,
   costCurrency,
@@ -6,6 +6,10 @@ import {
   spendableWax,
   getWaxHive,
   buildCost,
+  UPGRADE_DEFS,
+  getUpgradeTier,
+  isUpgradeUnlocked,
+  nextUpgradeCost,
 } from './state';
 
 export interface ActionResult {
@@ -130,6 +134,59 @@ export function launchVessel(state: GameState): ActionResult {
 export function dismissJournal(state: GameState): ActionResult {
   if (!state.journal.pending) return { ok: false, reason: 'No pending journal entry' };
   state.journal.pending = false;
-  state.vessel.phase = 'reviewed';
+  state.journal.dismissedCount += 1;
+  // Reset the vessel for another launch instead of ending the prototype.
+  // Each new launch + journal entry unlocks the next upgrade tier.
+  state.vessel.phase = 'building';
+  state.vessel.deliveredBlocks = 0;
+  state.vessel.launchTimer = 0;
+  return { ok: true };
+}
+
+export function buyUpgrade(state: GameState, id: UpgradeId): ActionResult {
+  const def = UPGRADE_DEFS[id];
+  if (!def) return { ok: false, reason: `Unknown upgrade ${id}` };
+  if (!isUpgradeUnlocked(state, id)) {
+    return { ok: false, reason: `Upgrade locked — needs more journal entries` };
+  }
+  const cost = nextUpgradeCost(state, id);
+  if (cost <= 0) return { ok: false, reason: `Already at max tier` };
+
+  if (def.currency === 'pollen') {
+    if (totalPollen(state) < cost) {
+      return { ok: false, reason: `Need ${cost} pollen` };
+    }
+    let remaining = cost;
+    const foragerHives = state.hives
+      .filter((h): h is ForagerHiveData => h.type === 'forager')
+      .sort((a, b) => b.pollen - a.pollen);
+    for (const h of foragerHives) {
+      if (remaining <= 0) break;
+      const take = Math.min(h.pollen, remaining);
+      h.pollen -= take;
+      remaining -= take;
+    }
+  } else {
+    if (spendableWax(state) < cost) {
+      return { ok: false, reason: `Need ${cost} wax` };
+    }
+    let remaining = cost;
+    const waxHive = getWaxHive(state);
+    const fromHive = Math.min(waxHive.waxBlocks, remaining);
+    waxHive.waxBlocks -= fromHive;
+    remaining -= fromHive;
+    if (remaining > 0) {
+      const fromVessel = Math.min(state.vessel.deliveredBlocks, remaining);
+      state.vessel.deliveredBlocks -= fromVessel;
+      remaining -= fromVessel;
+      if (
+        state.vessel.phase === 'ready' &&
+        state.vessel.deliveredBlocks < state.vessel.requiredBlocks
+      ) {
+        state.vessel.phase = 'building';
+      }
+    }
+  }
+  state.upgrades[id] = getUpgradeTier(state, id) + 1;
   return { ok: true };
 }

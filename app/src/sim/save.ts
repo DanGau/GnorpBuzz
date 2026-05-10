@@ -21,6 +21,14 @@ export function deserialize(blob: string): GameState {
       return h;
     });
   }
+  // Migration: journal.dismissedCount may be missing in older saves.
+  if (merged.journal && (merged.journal as { dismissedCount?: number }).dismissedCount === undefined) {
+    merged.journal.dismissedCount = merged.journal.pending
+      ? Math.max(0, merged.journal.entries.length - 1)
+      : merged.journal.entries.length;
+  }
+  if (!merged.upgrades) merged.upgrades = {};
+  if (typeof merged.launchCount !== 'number') merged.launchCount = 0;
   return merged;
 }
 

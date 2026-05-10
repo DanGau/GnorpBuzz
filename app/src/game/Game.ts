@@ -10,7 +10,14 @@ import { flowerSystem } from '../sim/systems/flowers';
 import { vesselSystem } from '../sim/systems/vessel';
 import { launchSystem } from '../sim/systems/launch';
 import { journalSystem } from '../sim/systems/journal';
-import { buyBee, dismissJournal, launchVessel, buildHive } from '../sim/actions';
+import {
+  buyBee,
+  dismissJournal,
+  launchVessel,
+  buildHive,
+  buyUpgrade,
+} from '../sim/actions';
+import type { UpgradeId } from '../sim/state';
 import type { ActionResult } from '../sim/actions';
 import { saveToStorage, loadFromStorage, clearStorage } from '../sim/save';
 import { Observer } from '../sim/observer';
@@ -201,6 +208,16 @@ export class Game {
 
   buildHive(type: HiveType): ActionResult {
     const result = buildHive(this.state, type);
+    if (result.ok) {
+      saveToStorage(this.state);
+      this.observer.emit();
+      if (this.ui) this.ui.update();
+    }
+    return result;
+  }
+
+  buyUpgrade(id: UpgradeId): ActionResult {
+    const result = buyUpgrade(this.state, id);
     if (result.ok) {
       saveToStorage(this.state);
       this.observer.emit();

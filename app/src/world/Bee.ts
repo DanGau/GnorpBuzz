@@ -1,7 +1,50 @@
 import type { GameState, ForagerHiveData, WaxHiveData } from '../sim/state';
-import { TUNING } from '../sim/state';
+import { TUNING, getUpgradeTier } from '../sim/state';
 import type { World } from './World';
 import { WORLD } from './layout';
+
+interface BeeStats {
+  speedMul: number;
+  harvestMul: number;
+  productionMul: number;
+  pickupMul: number;
+  dropMul: number;
+  batchSize: number;
+  carryAmount: number;
+}
+
+// Effective per-role stats after applying upgrade modifiers. Pure function
+// of state so we can recompute cheaply each tick. Returns a uniform shape
+// with sensible defaults for any field a role doesn't use.
+function statsFor(
+  role: 'forager' | 'wax-maker' | 'builder',
+  state: GameState,
+): BeeStats {
+  const base: BeeStats = {
+    speedMul: 1,
+    harvestMul: 1,
+    productionMul: 1,
+    pickupMul: 1,
+    dropMul: 1,
+    batchSize: 1,
+    carryAmount: 1,
+  };
+  if (role === 'forager') {
+    base.speedMul = Math.pow(1.15, getUpgradeTier(state, 'forager-swift-wings'));
+    base.harvestMul = Math.pow(0.8, getUpgradeTier(state, 'forager-quick-forage'));
+    base.carryAmount = 1 + getUpgradeTier(state, 'forager-pollen-pouches');
+  } else if (role === 'wax-maker') {
+    base.productionMul = Math.pow(0.85, getUpgradeTier(state, 'waxmaker-stoked-furnace'));
+    base.pickupMul = Math.pow(0.7, getUpgradeTier(state, 'waxmaker-quick-pickup'));
+    base.batchSize = 1 + getUpgradeTier(state, 'waxmaker-big-batches');
+  } else {
+    base.speedMul = Math.pow(1.15, getUpgradeTier(state, 'builder-strong-wings'));
+    base.pickupMul = Math.pow(0.7, getUpgradeTier(state, 'builder-quick-drops'));
+    base.dropMul = Math.pow(0.7, getUpgradeTier(state, 'builder-quick-drops'));
+    base.carryAmount = 1 + getUpgradeTier(state, 'builder-heavy-lifters');
+  }
+  return base;
+}
 
 export type BeeRole = 'forager' | 'wax-maker' | 'builder';
 
@@ -40,6 +83,7 @@ export class Bee {
   targetY: number;
   state: BeeState;
   carrying: BeeCarrying;
+  carryAmount: number; // how many units the bee is carrying (capacity upgrades)
   workTimer: number;
   targetFlowerId: string | null;
   targetHiveId: string | null;
@@ -86,6 +130,7 @@ export class Bee {
     this.targetY = homeY;
     this.state = 'idle';
     this.carrying = 'none';
+    this.carryAmount = 0;
     this.workTimer = 0;
     this.targetFlowerId = null;
     this.targetHiveId = null;
@@ -105,7 +150,7 @@ export class Bee {
     this.nextTipScheduledAtMs = 4000 + Math.random() * 3000;
   }
 
-  private flyToward(dtMs: number): boolean {
+  private flyToward(dtMs: number, state?: GameState): boolean {
     this.prevX = this.x;
     this.prevY = this.y;
     const dx = this.targetX - this.x;
@@ -127,14 +172,15 @@ export class Bee {
     this.flightAgeMs += dtMs;
 
     // Per-bee speed jitter (±15%) keeps the swarm from moving in lockstep.
-    let baseSpeed = TUNING.BEE_SPEED * (1 + this.seed * 0.15);
+    const speedMul = state ? statsFor(this.role, state).speedMul : 1;
+    let baseSpeed = TUNING.BEE_SPEED * (1 + this.seed * 0.15) * speedMul;
     // Dive-bomb skips easing — punchy plunge at full speed.
     const isDive = this.state === 'dive-bombing-pollen';
     if (isDive) baseSpeed *= 2.2;
 
-    let speedMul: number;
+    let easeMul: number;
     if (isDive) {
-      speedMul = 1;
+      easeMul = 1;
     } else {
       // Quad.out acceleration ramp (200ms) — accelerate from rest.
       const accelFrac = Math.min(1, this.flightAgeMs / 200);
@@ -144,10 +190,10 @@ export class Bee {
       const decelFrac = Math.min(1, dist / decelDist);
       const decelEase = decelFrac * (2 - decelFrac);
       // Floor at 0.18 so we don't asymptote and never arrive.
-      speedMul = Math.max(0.18, Math.min(accelEase, decelEase));
+      easeMul = Math.max(0.18, Math.min(accelEase, decelEase));
     }
 
-    const move = baseSpeed * speedMul * (dtMs / 1000);
+    const move = baseSpeed * easeMul * (dtMs / 1000);
     if (move >= dist) {
       this.x = this.targetX;
       this.y = this.targetY;
@@ -230,18 +276,19 @@ export class Bee {
             this.bumpIdleConfusion(state, world);
           }
         }
-        this.flyToward(dtMs);
+        this.flyToward(dtMs, state);
         break;
       }
       case 'flying-to-flower': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           const flower = state.flowers.find((f) => f.id === this.targetFlowerId);
           if (!flower || flower.claimedByBeeId !== this.id || flower.yieldRemaining === 0) {
             this.releaseFlowerClaim(state);
             this.returnToIdle(world);
           } else {
             this.state = 'harvesting';
-            this.workTimer = TUNING.HARVEST_DURATION_MS;
+            const fStats = statsFor('forager', state);
+            this.workTimer = TUNING.HARVEST_DURATION_MS * fStats.harvestMul;
             // Bee bumps the flower — squash + tiny pollen puff.
             this.pulseShake(state);
             world.particles.emit('pollenPuff', this.x, this.y, 2);
@@ -259,11 +306,12 @@ export class Bee {
             if (flower.yieldRemaining === 0) {
               flower.regrowTimerMs = TUNING.FLOWER_REGROW_MS;
             }
-            // Sparkle on a successful harvest.
             world.particles.emit('sparkle', this.x, this.y - 4, 1);
           }
           this.targetFlowerId = null;
           this.carrying = 'pollen';
+          const fs = statsFor('forager', state);
+          this.carryAmount = fs.carryAmount;
           const home = this.homePos(world);
           this.setFlightTarget(home.x, home.y - 10);
           this.state = 'flying-home-with-pollen';
@@ -278,15 +326,16 @@ export class Bee {
           world.particles.emit('pollenPuff', this.x, this.y + 3, 1);
           this.trailCooldownMs = 600 + Math.random() * 200;
         }
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           const hive = state.hives.find((h) => h.id === this.homeHiveId);
           if (hive && hive.type === 'forager') {
-            (hive as ForagerHiveData).pollen += 1;
+            (hive as ForagerHiveData).pollen += this.carryAmount;
           }
-          // Toss-overhead deposit: fan of pollen particles.
-          world.particles.emit('pollenPuff', this.x, this.y, 6);
+          // Toss-overhead deposit: fan of pollen particles, count scales w/ load.
+          world.particles.emit('pollenPuff', this.x, this.y, 4 + this.carryAmount * 2);
           this.pulseShake(state);
           this.carrying = 'none';
+          this.carryAmount = 0;
           this.state = 'idle';
           this.idleWaitMs = 0;
         }
@@ -352,11 +401,11 @@ export class Bee {
             this.bumpIdleConfusion(state, world);
           }
         }
-        this.flyToward(dtMs);
+        this.flyToward(dtMs, state);
         break;
       }
       case 'flying-to-pollen-source': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           // Reached the elevated overshoot point — now plummet to the pickup.
           const hive = state.hives.find((h) => h.id === this.targetHiveId);
           if (hive && hive.type === 'forager' && (hive as ForagerHiveData).pollen > 0) {
@@ -378,9 +427,10 @@ export class Bee {
         break;
       }
       case 'dive-bombing-pollen': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           this.state = 'picking-up-pollen';
-          this.workTimer = TUNING.PICKUP_DURATION_MS;
+          const ws = statsFor('wax-maker', state);
+          this.workTimer = TUNING.PICKUP_DURATION_MS * ws.pickupMul;
           this.pulseShake(state, 160);
           world.particles.emit('crashDust', this.x, this.y + 4, 3);
         }
@@ -407,9 +457,10 @@ export class Bee {
         break;
       }
       case 'flying-home-with-pollen': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           this.state = 'producing-wax';
-          this.workTimer = TUNING.PRODUCE_DURATION_MS;
+          const ws = statsFor('wax-maker', state);
+          this.workTimer = TUNING.PRODUCE_DURATION_MS * ws.productionMul;
           this.steamCooldownMs = 0;
           this.pulseShake(state);
         }
@@ -429,11 +480,12 @@ export class Bee {
         }
         if (this.workTimer <= 0) {
           const home = state.hives.find((h) => h.id === this.homeHiveId);
+          const ws = statsFor('wax-maker', state);
           if (home && home.type === 'wax') {
-            (home as WaxHiveData).waxBlocks += 1;
+            (home as WaxHiveData).waxBlocks += ws.batchSize;
           }
-          // Sparkle pop when the block lands in the stockpile.
-          world.particles.emit('sparkle', this.x, this.y, 1);
+          // Sparkle pop when the block lands in the stockpile (scaled with batch).
+          world.particles.emit('sparkle', this.x, this.y, ws.batchSize);
           this.pulseShake(state, 160);
           this.carrying = 'none';
           this.state = 'idle';
@@ -495,15 +547,16 @@ export class Bee {
             }
           }
         }
-        this.flyToward(dtMs);
+        this.flyToward(dtMs, state);
         break;
       }
       case 'flying-to-wax-source': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           const hive = state.hives.find((h) => h.id === this.targetHiveId);
           if (hive && hive.type === 'wax' && (hive as WaxHiveData).waxBlocks > 0) {
             this.state = 'picking-up-block';
-            this.workTimer = TUNING.PICKUP_DURATION_MS;
+            const bs = statsFor('builder', state);
+            this.workTimer = TUNING.PICKUP_DURATION_MS * bs.pickupMul;
           } else {
             this.targetHiveId = null;
             this.returnToIdle(world);
@@ -516,8 +569,11 @@ export class Bee {
         if (this.workTimer <= 0) {
           const hive = state.hives.find((h) => h.id === this.targetHiveId);
           if (hive && hive.type === 'wax' && (hive as WaxHiveData).waxBlocks > 0) {
-            (hive as WaxHiveData).waxBlocks -= 1;
+            const bs = statsFor('builder', state);
+            const take = Math.min((hive as WaxHiveData).waxBlocks, bs.carryAmount);
+            (hive as WaxHiveData).waxBlocks -= take;
             this.carrying = 'wax-block';
+            this.carryAmount = take;
             this.targetHiveId = null;
             this.setFlightTarget(WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y - 30);
             this.state = 'flying-to-vessel';
@@ -530,26 +586,28 @@ export class Bee {
         break;
       }
       case 'flying-to-vessel': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           this.state = 'dropping-block';
-          this.workTimer = TUNING.DROP_DURATION_MS;
+          const bs = statsFor('builder', state);
+          this.workTimer = TUNING.DROP_DURATION_MS * bs.dropMul;
         }
         break;
       }
       case 'dropping-block': {
         this.workTimer -= dtMs;
         if (this.workTimer <= 0) {
+          const carried = this.carryAmount;
           if (state.vessel.phase === 'building') {
-            state.vessel.deliveredBlocks += 1;
+            state.vessel.deliveredBlocks += carried;
           } else {
             const wax = state.hives.find((h) => h.type === 'wax');
-            if (wax && wax.type === 'wax') (wax as WaxHiveData).waxBlocks += 1;
+            if (wax && wax.type === 'wax') (wax as WaxHiveData).waxBlocks += carried;
           }
-          // Snap-place: dust puff + satisfied body-shake on the builder.
-          world.particles.emit('crashDust', WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y + 8, 4);
-          world.particles.emit('sparkle', WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y, 1);
+          world.particles.emit('crashDust', WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y + 8, 4 + carried);
+          world.particles.emit('sparkle', WORLD.VESSEL_PAD.x, WORLD.VESSEL_PAD.y, carried);
           this.pulseShake(state, 200);
           this.carrying = 'none';
+          this.carryAmount = 0;
           const home = this.homePos(world);
           this.setFlightTarget(home.x, home.y - 10, 60);
           this.state = 'flying-home-empty';
@@ -557,7 +615,7 @@ export class Bee {
         break;
       }
       case 'flying-home-empty': {
-        if (this.flyToward(dtMs)) {
+        if (this.flyToward(dtMs, state)) {
           this.state = 'idle';
           this.idleWaitMs = 0;
         }

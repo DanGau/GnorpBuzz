@@ -97,6 +97,46 @@
       .hive-control.hive-builder .header .count-badge {
         background: rgba(224, 122, 58, 0.28); color: #f0a070;
       }
+      .hive-control { min-width: 220px; max-width: 260px; }
+      .hive-control .upgrade-list {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(245, 209, 102, 0.18);
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      .hive-control .upgrade-row {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 11px;
+      }
+      .hive-control .upgrade-row .up-info { flex: 1; min-width: 0; }
+      .hive-control .upgrade-row .up-name {
+        color: #f0e9d2; font-weight: 600;
+      }
+      .hive-control .upgrade-row .up-blurb {
+        color: #9a9078; font-size: 10px;
+      }
+      .hive-control .upgrade-row .up-action {
+        display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+      }
+      .hive-control .upgrade-row .up-tier {
+        color: #b9a466; font-size: 10px; letter-spacing: 0.05em;
+      }
+      .hive-control .upgrade-row .up-btn {
+        background: #5a4a30; color: #f0e9d2;
+        border: none; border-radius: 4px;
+        padding: 3px 8px; font-size: 10px; font-weight: 600;
+        cursor: pointer;
+        min-width: 56px; text-align: center;
+      }
+      .hive-control .upgrade-row .up-btn:hover:not(:disabled) {
+        background: #6e5a3a;
+      }
+      .hive-control .upgrade-row .up-btn:disabled {
+        background: #3a2f1d; color: #6e6450; cursor: not-allowed;
+      }
+      .hive-control .upgrade-row.locked .up-name { color: #7a7460; }
+      .hive-control .upgrade-row.locked .up-blurb { color: #5a5448; }
+      .hive-control .upgrade-row.locked { opacity: 0.7; }
 
       /* Launch button — anchored next to the airplane in world space. */
       .launch-anchor {
