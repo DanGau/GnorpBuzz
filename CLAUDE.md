@@ -39,5 +39,14 @@ session-end if game files were edited without build + screenshot evidence.
   `window.debug` is reachable
 - `.claude/skills/` — agent-facing tooling
 - `docs/agent-first/` — principles behind the harness
+- `docs/game-design.md` — game concept, core loop, vessel progression, journal system
+- `docs/economy-research.md` — idle/incremental economy design research & recommended tuning
+- `docs/phases.md` — four-phase game arc with economy curves and per-phase mechanics
+- `docs/dps-model.md` — production formulas and bee-role mechanics per phase
+- `docs/population.md` — hive purchasing, Queen fill rate, and Phase 4 colonization migration
+- `docs/mvp-scope.md` — minimum slice we're actually building first
+- `docs/architecture.md` — engine layers, object responsibilities, file layout
+- `docs/agent-behavior.md` — Phase 1 agent-based production model (bee state machines, resource chain)
 
-Read `docs/agent-first/principles.md` for the philosophy this repo is built on.
+Read `docs/agent-first/principles.md` for the philosophy this repo is built on, and
+`docs/game-design.md` for what we're actually building.
