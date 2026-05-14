@@ -4,31 +4,35 @@ import {
   TUNING,
   totalBees,
   totalPollen,
-  spendableWax,
-  nextBeeCost,
-  getForagerHive,
-  getWaxHive,
-  getBuilderHive,
+  countRole,
+  nextWorkerCost,
+  cellCost,
+  hexDistance,
+  mustPlaceForager,
+  cellAt,
+  cellSynergy,
+  isCellBuyable,
+  buyableCells,
+  ARTIFACTS,
+  artifactForTier,
 } from './state';
-import { vesselSystem } from './systems/vessel';
-import { buyBee, dismissJournal, launchVessel } from './actions';
+import { digSiteSystem } from './systems/dig-sites';
+import { artifactSystem } from './systems/artifact';
+import {
+  buyCell,
+  assignCell,
+  dismissArtifact,
+  damageDigSite,
+} from './actions';
 import { serialize, deserialize } from './save';
 
-describe('sim state shape', () => {
-  it('starts with three empty hives (forager, builder, wax)', () => {
+describe('hive cell model', () => {
+  it('starts with three free empty cells, no workers, no queen', () => {
     const s = createInitialState();
-    expect(s.hives).toHaveLength(3);
-    expect(getForagerHive(s).bees).toBe(0);
-    expect(getBuilderHive(s).bees).toBe(0);
-    expect(getWaxHive(s).bees).toBe(0);
+    expect(s.hive.cells).toHaveLength(3);
+    expect(s.hive.cells.every((c) => c.role === null)).toBe(true);
     expect(totalBees(s)).toBe(0);
     expect(totalPollen(s)).toBe(0);
-    expect(spendableWax(s)).toBe(0);
-  });
-
-  it('first builder bee is free', () => {
-    const s = createInitialState();
-    expect(nextBeeCost(s, 'builder')).toBe(0);
   });
 
   it('starts with flowers in the meadow at full bloom', () => {
@@ -37,132 +41,188 @@ describe('sim state shape', () => {
     for (const f of s.flowers) {
       expect(f.yieldRemaining).toBe(TUNING.FLOWER_YIELD);
       expect(f.regrowTimerMs).toBe(0);
-      expect(f.claimedByBeeId).toBeNull();
+      expect(f.claimants).toBe(0);
     }
   });
 
-  it('vessel needs the configured block count', () => {
+  it('starts with an active tier-1 dig site at full HP', () => {
     const s = createInitialState();
-    expect(s.vessel.requiredBlocks).toBe(TUNING.VESSEL_BLOCKS_REQUIRED);
-    expect(s.vessel.deliveredBlocks).toBe(0);
-    expect(s.vessel.phase).toBe('building');
+    expect(s.digSite.tier).toBe(1);
+    expect(s.digSite.state).toBe('active');
+    expect(s.digSite.hp).toBe(TUNING.DIG_SITE_TIER_1_HP);
+    expect(s.digSite.maxHp).toBe(TUNING.DIG_SITE_TIER_1_HP);
+  });
+
+  it('exposes 7 artifacts mirroring the 7 vessel tiers', () => {
+    expect(ARTIFACTS).toHaveLength(7);
+    expect(artifactForTier(1)?.id).toBe('first-relic');
+    expect(artifactForTier(7)?.id).toBe('sky-tether');
   });
 });
 
-describe('actions', () => {
-  it('first forager bee is free', () => {
+describe('cell actions', () => {
+  it('the first worker must be a Forager', () => {
     const s = createInitialState();
-    expect(nextBeeCost(s, 'forager')).toBe(0);
-    const result = buyBee(s, 'forager');
-    expect(result.ok).toBe(true);
-    expect(getForagerHive(s).bees).toBe(1);
+    expect(mustPlaceForager(s)).toBe(true);
+    const bad = assignCell(s, 0, 0, 'excavator');
+    expect(bad.ok).toBe(false);
+    expect(bad.reason).toMatch(/Forager/);
+    expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
+    expect(mustPlaceForager(s)).toBe(false);
   });
 
-  it('first wax-maker bee is free (after wax hive is built)', () => {
+  it('first worker of each role is free, then escalates', () => {
     const s = createInitialState();
-    getWaxHive(s).built = true; // skip the build step for unit testing
-    expect(nextBeeCost(s, 'wax')).toBe(0);
-    buyBee(s, 'wax');
-    expect(getWaxHive(s).bees).toBe(1);
+    expect(nextWorkerCost(s, 'forager')).toBe(0);
+    expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
+    expect(countRole(s, 'forager')).toBe(1);
+    expect(nextWorkerCost(s, 'forager')).toBeGreaterThan(0);
+    // Excavator is still free — cost is per-role, and the first-forager
+    // requirement is now satisfied.
+    expect(nextWorkerCost(s, 'excavator')).toBe(0);
+    expect(assignCell(s, -1, 1, 'excavator').ok).toBe(true);
   });
 
-  it('subsequent foragers cost pollen and fail without it', () => {
+  it('placing a second worker of a role requires pollen', () => {
     const s = createInitialState();
-    buyBee(s, 'forager'); // free
-    expect(nextBeeCost(s, 'forager')).toBeGreaterThan(0);
-    const result = buyBee(s, 'forager');
+    assignCell(s, 0, 0, 'forager'); // free
+    const result = assignCell(s, 0, 1, 'forager');
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/pollen/);
+    s.hive.pollen = 100;
+    const cost = nextWorkerCost(s, 'forager');
+    expect(assignCell(s, 0, 1, 'forager').ok).toBe(true);
+    expect(s.hive.pollen).toBe(100 - cost);
   });
 
-  it('subsequent foragers can be bought with pollen', () => {
+  it('cell assignments are permanent — a filled cell cannot be reassigned', () => {
     const s = createInitialState();
-    buyBee(s, 'forager'); // free, count = 1
-    getForagerHive(s).pollen = 100;
-    const cost = nextBeeCost(s, 'forager');
-    const result = buyBee(s, 'forager');
-    expect(result.ok).toBe(true);
-    expect(getForagerHive(s).pollen).toBe(100 - cost);
+    s.hive.pollen = 100;
+    assignCell(s, 0, 0, 'forager');
+    const reassign = assignCell(s, 0, 0, 'excavator');
+    expect(reassign.ok).toBe(false);
+    expect(reassign.reason).toMatch(/already/);
+    expect(cellAt(s.hive, 0, 0)?.role).toBe('forager');
   });
 
-  it('builders cost wax (after builder hive is built)', () => {
+  it('buys a frontier cell; cost scales with hex distance from center', () => {
     const s = createInitialState();
-    getBuilderHive(s).built = true;
-    buyBee(s, 'builder'); // free
-    const fail = buyBee(s, 'builder');
-    expect(fail.ok).toBe(false);
-    expect(fail.reason).toMatch(/wax/);
-    s.vessel.deliveredBlocks = 100;
-    const ok = buyBee(s, 'builder');
-    expect(ok.ok).toBe(true);
+    s.hive.pollen = 100000;
+    const frontier = buyableCells(s.hive);
+    expect(frontier.length).toBeGreaterThan(0);
+    const target = frontier[0];
+    expect(isCellBuyable(s.hive, target.q, target.r)).toBe(true);
+    expect(buyCell(s, target.q, target.r).ok).toBe(true);
+    expect(cellAt(s.hive, target.q, target.r)?.role).toBeNull();
+    // A ring-1 cell is cheaper than a ring-3 cell.
+    expect(cellCost(1, 0)).toBeLessThan(cellCost(3, 0));
+    expect(cellCost(1, 0)).toBe(TUNING.CELL_BASE_COST);
   });
 
-  it('bee cost grows with each purchase', () => {
+  it('rejects buying a cell that is not on the frontier', () => {
     const s = createInitialState();
-    buyBee(s, 'forager');
-    const c1 = nextBeeCost(s, 'forager');
-    // Hand-mutate to fake the next purchase happening
-    getForagerHive(s).bees = 5;
-    const cN = nextBeeCost(s, 'forager');
-    expect(cN).toBeGreaterThan(c1);
+    s.hive.pollen = 100000;
+    expect(buyCell(s, 9, 9).ok).toBe(false);
   });
 
-  it('bee cost is independent per type', () => {
+  it('cannot grow the comb past the radius cap', () => {
     const s = createInitialState();
-    buyBee(s, 'forager');
-    expect(nextBeeCost(s, 'wax')).toBe(0); // wax bee still free
+    s.hive.pollen = 100000;
+    // Greedily buy every reachable cell.
+    for (let i = 0; i < 200; i++) {
+      const frontier = buyableCells(s.hive);
+      if (frontier.length === 0) break;
+      buyCell(s, frontier[0].q, frontier[0].r);
+    }
+    expect(buyableCells(s.hive)).toHaveLength(0);
+    for (const c of s.hive.cells) {
+      expect(hexDistance(c.q, c.r)).toBeLessThanOrEqual(TUNING.MAX_COMB_RADIUS);
+    }
   });
 
-  it('vessel transitions to ready (not launching) when full', () => {
+  it('counts same-role neighbors as synergy', () => {
     const s = createInitialState();
-    s.vessel.deliveredBlocks = TUNING.VESSEL_BLOCKS_REQUIRED;
-    vesselSystem(s);
-    expect(s.vessel.phase).toBe('ready');
+    s.hive.pollen = 1000;
+    // Starting cells (-1,1) and (0,1) are adjacent to each other.
+    assignCell(s, -1, 1, 'forager');
+    assignCell(s, 0, 1, 'forager');
+    expect(cellSynergy(s.hive, -1, 1)).toBe(1);
+    expect(cellSynergy(s.hive, 0, 1)).toBe(1);
+    // A worker with no same-role neighbor has zero synergy.
+    assignCell(s, 0, 0, 'excavator');
+    expect(cellSynergy(s.hive, 0, 0)).toBe(0);
+  });
+});
+
+describe('dig site progression', () => {
+  it('damaging the dig site to 0 HP triggers a reveal', () => {
+    const s = createInitialState();
+    damageDigSite(s, TUNING.DIG_SITE_TIER_1_HP);
+    digSiteSystem(s);
+    expect(s.digSite.state).toBe('revealing');
+    expect(s.artifacts.pending).toBe('first-relic');
   });
 
-  it('launchVessel only works when vessel is ready', () => {
+  it('artifact system pushes a journal entry and pends the modal', () => {
     const s = createInitialState();
-    expect(launchVessel(s).ok).toBe(false);
-    s.vessel.phase = 'ready';
-    expect(launchVessel(s).ok).toBe(true);
-    expect(s.vessel.phase).toBe('launching');
+    damageDigSite(s, TUNING.DIG_SITE_TIER_1_HP);
+    digSiteSystem(s);
+    artifactSystem(s);
+    expect(s.journal.pending).toBe(true);
+    expect(s.journal.entries).toHaveLength(1);
+    expect(s.journal.entries[0].id).toBe('first-relic');
   });
 
-  it('buying a builder can drain the vessel pile and revert ready→building', () => {
+  it('dismissing the artifact advances to the next dig site tier', () => {
     const s = createInitialState();
-    getBuilderHive(s).built = true;
-    buyBee(s, 'builder'); // free
-    s.vessel.deliveredBlocks = TUNING.VESSEL_BLOCKS_REQUIRED;
-    vesselSystem(s);
-    expect(s.vessel.phase).toBe('ready');
-    const result = buyBee(s, 'builder');
-    expect(result.ok).toBe(true);
-    expect(s.vessel.deliveredBlocks).toBeLessThan(TUNING.VESSEL_BLOCKS_REQUIRED);
-    expect(s.vessel.phase).toBe('building');
-  });
-
-  it('dismissJournal closes a pending entry and resets the vessel', () => {
-    const s = createInitialState();
-    s.journal.pending = true;
-    s.journal.entries.push({ id: 'e1', tier: 1, text: 'test' });
-    s.vessel.deliveredBlocks = 8;
-    s.vessel.phase = 'crashed';
-    const result = dismissJournal(s);
-    expect(result.ok).toBe(true);
-    expect(s.journal.pending).toBe(false);
+    damageDigSite(s, TUNING.DIG_SITE_TIER_1_HP);
+    digSiteSystem(s);
+    artifactSystem(s);
+    expect(dismissArtifact(s).ok).toBe(true);
+    expect(s.artifacts.revealed).toContain('first-relic');
+    expect(s.digSite.tier).toBe(2);
+    expect(s.digSite.state).toBe('active');
+    expect(s.digSite.hp).toBe(s.digSite.maxHp);
     expect(s.journal.dismissedCount).toBe(1);
-    expect(s.vessel.phase).toBe('building');
-    expect(s.vessel.deliveredBlocks).toBe(0);
+  });
+
+  it('dismissing the legendary artifact triggers ascent', () => {
+    const s = createInitialState();
+    for (let t = 1; t <= 6; t++) {
+      s.digSite.hp = 0;
+      digSiteSystem(s);
+      artifactSystem(s);
+      dismissArtifact(s);
+    }
+    expect(s.digSite.tier).toBe(7);
+    s.digSite.hp = 0;
+    digSiteSystem(s);
+    artifactSystem(s);
+    dismissArtifact(s);
+    expect(s.artifacts.revealed).toContain('sky-tether');
+    expect(s.ascent.phase).toBe('launching');
   });
 });
 
 describe('save', () => {
   it('round-trips state', () => {
     const s = createInitialState();
-    getForagerHive(s).pollen = 7;
+    s.hive.pollen = 7;
+    assignCell(s, 0, 0, 'forager');
     s.flowers[0].yieldRemaining = 2;
+    s.digSite.hp = 12;
     const restored = deserialize(serialize(s));
-    expect(getForagerHive(restored).pollen).toBe(7);
+    expect(restored.hive.pollen).toBe(7);
+    expect(cellAt(restored.hive, 0, 0)?.role).toBe('forager');
     expect(restored.flowers[0].yieldRemaining).toBe(2);
+    expect(restored.digSite.hp).toBe(12);
+  });
+
+  it('rejects an incompatible pre-v4 save shape', () => {
+    const legacy = JSON.stringify({ hives: [], flowers: [], tick: 5 });
+    const restored = deserialize(legacy);
+    expect(restored.hive).toBeDefined();
+    expect(restored.hive.cells.length).toBe(3);
+    expect(restored.tick).toBe(0);
   });
 });

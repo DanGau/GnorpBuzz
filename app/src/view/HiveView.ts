@@ -1,228 +1,208 @@
 import { Container, Graphics } from 'pixi.js';
 import type { World } from '../world/World';
-import type { GameState, ForagerHiveData, WaxHiveData } from '../sim/state';
+import type { GameState, HiveCell } from '../sim/state';
+import { buyableCells, cellSynergy } from '../sim/state';
+import { WORLD, hexToWorld } from '../world/layout';
 
-// Renders Forager Hives (with visible pollen pots) and Wax Hives (with a
-// visible cream-block stockpile). Each hive is interactive — clicking the
-// body fires the onHiveClick callback. The selected hive gets a glowing
-// halo + subtle scale pulse.
+// Renders the Hive as a honeycomb of hex cells. Each cell is one of:
+//   empty    — unlocked, no worker
+//   forager  — holds a forager worker (gold)
+//   excavator— holds an excavator worker (red stone)
+//   buyable  — locked frontier cell, can be unlocked
+// The selected cell gets a bright halo. Buyable cells pulse invitingly.
 
-interface HiveSprite {
-  id: string;
-  type: 'forager' | 'wax' | 'builder';
-  shadow: Graphics;
-  highlight: Graphics;
-  body: Graphics;
-  pollenPots: Graphics;
-  blockStockpile: Graphics;
-  x: number;
-  y: number;
+type CellKind = 'empty' | 'forager' | 'excavator' | 'buyable';
+
+interface CellSprite {
+  key: string;
+  q: number;
+  r: number;
+  kind: CellKind;
+  synergy: number;
+  base: Graphics;
+  hit: Graphics;
 }
+
+const HEX = WORLD.HEX_SIZE;
+
+function hexPoints(size: number): number[] {
+  const pts: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 180) * (60 * i - 30);
+    pts.push(Math.cos(a) * size, Math.sin(a) * size);
+  }
+  return pts;
+}
+
+const CELL_COLORS: Record<'forager' | 'excavator', number> = {
+  forager: 0xe8b04c,
+  excavator: 0xc94a2a,
+};
 
 export class HiveView {
   readonly container: Container;
-  private sprites: Map<string, HiveSprite>;
-  private onHiveClick: (id: string) => void;
+  private backdrop: Graphics;
+  private sprites: Map<string, CellSprite>;
+  // The selection halo lives on its own Graphics, kept as the topmost child
+  // so it always draws above neighboring cells (the halo extends past the
+  // selected hex and would otherwise be occluded by later-added cells).
+  private selectionGfx: Graphics;
+  private onCellClick: (q: number, r: number) => void;
   private pulse = 0;
 
-  constructor(onHiveClick: (id: string) => void) {
+  constructor(onCellClick: (q: number, r: number) => void) {
     this.container = new Container();
+    this.backdrop = new Graphics();
+    this.container.addChild(this.backdrop);
+    this.selectionGfx = new Graphics();
+    this.container.addChild(this.selectionGfx);
     this.sprites = new Map();
-    this.onHiveClick = onHiveClick;
+    this.onCellClick = onCellClick;
+    this.drawBackdrop();
   }
 
-  update(state: GameState, world: World, selectedHiveId: string | null, dtMs: number): void {
+  update(
+    state: GameState,
+    _world: World,
+    selectedCell: { q: number; r: number } | null,
+    dtMs: number,
+  ): void {
     this.pulse += dtMs / 1000;
 
-    for (const hive of world.hives.values()) {
-      if (!this.sprites.has(hive.hiveId)) {
-        const shadow = new Graphics();
-        const highlight = new Graphics();
-        const body = new Graphics();
-        const pollenPots = new Graphics();
-        const blockStockpile = new Graphics();
-        // Z-order: shadow at the bottom (under the hive), then highlight halo,
-        // then the hive body, then on-body decorations.
-        for (const g of [shadow, highlight, body, pollenPots, blockStockpile]) {
-          g.x = hive.x;
-          g.y = hive.y;
+    // Build the desired set of cells: every sim cell, plus the buyable
+    // frontier.
+    const desired = new Map<string, { q: number; r: number; kind: CellKind }>();
+    for (const c of state.hive.cells) {
+      desired.set(`${c.q},${c.r}`, { q: c.q, r: c.r, kind: kindOf(c) });
+    }
+    for (const b of buyableCells(state.hive)) {
+      const key = `${b.q},${b.r}`;
+      if (!desired.has(key)) desired.set(key, { q: b.q, r: b.r, kind: 'buyable' });
+    }
+
+    // Drop sprites no longer desired.
+    for (const [key, sprite] of this.sprites) {
+      if (!desired.has(key)) {
+        this.container.removeChild(sprite.base, sprite.hit);
+        sprite.base.destroy();
+        sprite.hit.destroy();
+        this.sprites.delete(key);
+      }
+    }
+
+    // Create / update sprites.
+    for (const [key, want] of desired) {
+      let sprite = this.sprites.get(key);
+      if (!sprite) {
+        const pos = hexToWorld(want.q, want.r);
+        const base = new Graphics();
+        const hit = new Graphics();
+        for (const g of [base, hit]) {
+          g.x = pos.x;
+          g.y = pos.y;
           this.container.addChild(g);
         }
-        body.eventMode = 'static';
-        body.cursor = 'pointer';
-        const id = hive.hiveId;
-        body.on('pointertap', (e) => {
+        hit.eventMode = 'static';
+        hit.cursor = 'pointer';
+        const q = want.q;
+        const r = want.r;
+        hit.on('pointertap', (e) => {
           e.stopPropagation();
-          this.onHiveClick(id);
+          this.onCellClick(q, r);
         });
-        const sprite: HiveSprite = {
-          id: hive.hiveId,
-          type: hive.type,
-          shadow,
-          highlight,
-          body,
-          pollenPots,
-          blockStockpile,
-          x: hive.x,
-          y: hive.y,
+        hit.poly(hexPoints(HEX)).fill({ color: 0xffffff, alpha: 0.001 });
+        sprite = {
+          key,
+          q: want.q,
+          r: want.r,
+          kind: want.kind,
+          synergy: -1,
+          base,
+          hit,
         };
-        this.drawShadow(sprite);
-        this.drawBody(sprite);
-        this.sprites.set(hive.hiveId, sprite);
+        this.sprites.set(key, sprite);
       }
-    }
-    const liveIds = new Set(Array.from(world.hives.values()).map((h) => h.hiveId));
-    for (const [id, sprite] of this.sprites) {
-      if (!liveIds.has(id)) {
-        for (const g of [
-          sprite.shadow,
-          sprite.highlight,
-          sprite.body,
-          sprite.pollenPots,
-          sprite.blockStockpile,
-        ]) {
-          this.container.removeChild(g);
-          g.destroy();
-        }
-        this.sprites.delete(id);
+
+      const synergy =
+        want.kind === 'forager' || want.kind === 'excavator'
+          ? cellSynergy(state.hive, want.q, want.r)
+          : 0;
+      if (sprite.kind !== want.kind || sprite.synergy !== synergy) {
+        sprite.kind = want.kind;
+        sprite.synergy = synergy;
+        this.drawCell(sprite);
       }
     }
 
-    for (const sprite of this.sprites.values()) {
-      const simHive = state.hives.find((h) => h.id === sprite.id);
-      if (!simHive) continue;
-
-      // Unbuilt hives render as a faded "ghost" of the building on a
-      // construction-site foundation. Resource visuals are skipped.
-      const built = simHive.built;
-      sprite.body.alpha = built ? 1 : 0.32;
-      sprite.shadow.alpha = built ? 1 : 0.4;
-      sprite.pollenPots.alpha = built ? 1 : 0;
-      sprite.blockStockpile.alpha = built ? 1 : 0;
-
-      if (built) {
-        if (sprite.type === 'forager') {
-          this.drawPollenPots(sprite, (simHive as ForagerHiveData).pollen);
-        } else if (sprite.type === 'wax') {
-          this.drawBlockStockpile(sprite, (simHive as WaxHiveData).waxBlocks);
-        }
-      }
-      this.drawHighlight(sprite, sprite.id === selectedHiveId);
-    }
+    this.drawSelection(selectedCell);
   }
 
-  private drawHighlight(sprite: HiveSprite, selected: boolean): void {
-    const g = sprite.highlight;
+  // Draw the selection halo on its own always-on-top layer.
+  private drawSelection(selectedCell: { q: number; r: number } | null): void {
+    const g = this.selectionGfx;
     g.clear();
-    if (!selected) return;
-    const breath = 1 + Math.sin(this.pulse * 3) * 0.08;
-    g.ellipse(0, -8, 56 * breath, 60 * breath).fill({ color: 0xfff2cf, alpha: 0.18 });
-    g.ellipse(0, -8, 44 * breath, 48 * breath).fill({ color: 0xffe680, alpha: 0.18 });
-    // Crisp outline ring at the hive base
-    g.ellipse(0, 16, 42, 8).stroke({ color: 0xffe680, width: 2, alpha: 0.9 });
+    // Re-add to move it back to the top — cell sprites created this frame
+    // were appended after it.
+    this.container.addChild(g);
+    if (!selectedCell) return;
+    const pos = hexToWorld(selectedCell.q, selectedCell.r);
+    const breath = 1 + Math.sin(this.pulse * 4) * 0.04;
+    g.poly(hexPoints((HEX + 2) * breath).map((v, i) => v + (i % 2 === 0 ? pos.x : pos.y)))
+      .stroke({ color: 0xfff2cf, width: 3, alpha: 0.95 });
   }
 
-  private drawBody(sprite: HiveSprite): void {
-    const g = sprite.body;
+  private drawBackdrop(): void {
+    // A soft earthy mound the comb nestles into, plus a ground shadow.
+    const g = this.backdrop;
     g.clear();
-    if (sprite.type === 'forager') {
-      const bands = [
-        { y: -50, w: 50, h: 18 },
-        { y: -32, w: 60, h: 18 },
-        { y: -14, w: 65, h: 18 },
-        { y: 4, w: 60, h: 18 },
-      ];
-      const colors = [0xe8b04c, 0xd49a36, 0xc18922, 0xa6741b];
-      for (let i = 0; i < bands.length; i++) {
-        const b = bands[i];
-        g.roundRect(-b.w / 2, b.y, b.w, b.h, 6).fill(colors[i]);
-      }
-      g.circle(0, 0, 7).fill(0x3a2a10);
-    } else if (sprite.type === 'wax') {
-      g.rect(-32, -45, 64, 50).fill(0xc7a86a);
-      g.rect(-32, -45, 64, 6).fill(0x8d7440);
-      for (let i = 0; i < 4; i++) {
-        g.rect(-32 + i * 16, -45, 1, 50).fill({ color: 0x8d7440, alpha: 0.4 });
-      }
-      g.roundRect(-8, -10, 16, 18, 2).fill(0x3a2a10);
-      g.rect(12, -60, 10, 18).fill(0x8d7440);
-      g.rect(11, -62, 12, 4).fill(0x6b5631);
+    const { x, y } = WORLD.HIVE;
+    g.ellipse(x, y + HEX * 2.6, HEX * 5.4, HEX * 1.5).fill({ color: 0x000000, alpha: 0.22 });
+    g.ellipse(x, y + HEX * 1.4, HEX * 4.6, HEX * 2.8).fill({ color: 0x3a2a16, alpha: 0.55 });
+  }
+
+  private drawCell(sprite: CellSprite): void {
+    const g = sprite.base;
+    g.clear();
+    const outer = hexPoints(HEX - 1.5);
+    const inner = hexPoints(HEX - 5);
+
+    if (sprite.kind === 'buyable') {
+      // Faint dashed-feel outline + a pulsing "+" to invite expansion.
+      const breath = 0.45 + Math.sin(this.pulse * 3) * 0.18;
+      g.poly(outer).fill({ color: 0xf0e9d2, alpha: 0.05 });
+      g.poly(outer).stroke({ color: 0xf5d166, width: 1.5, alpha: breath });
+      g.rect(-5, -1.4, 10, 2.8).fill({ color: 0xf5d166, alpha: breath + 0.2 });
+      g.rect(-1.4, -5, 2.8, 10).fill({ color: 0xf5d166, alpha: breath + 0.2 });
+      return;
+    }
+
+    if (sprite.kind === 'empty') {
+      g.poly(outer).fill({ color: 0x2a2012, alpha: 0.85 });
+      g.poly(inner).fill({ color: 0x1c160c, alpha: 0.9 });
+      g.poly(outer).stroke({ color: 0x6e5a32, width: 2 });
     } else {
-      // Builder Hive: a small wooden workshop with a peaked roof and a tool
-      // hanging on the side wall. Cooler/grayer wood tone to distinguish it
-      // from the warm-gold forager skep and the cream wax workshop.
-      // Body
-      g.rect(-26, -34, 52, 42).fill(0x9a7a4f);
-      // Roof (peak)
-      g.poly([-30, -34, 0, -56, 30, -34]).fill(0x6b4f30);
-      // Roof shadow line
-      g.moveTo(-30, -34).lineTo(30, -34).stroke({ color: 0x4a3520, width: 1 });
-      // Vertical plank lines
-      for (let i = 1; i < 4; i++) {
-        g.rect(-26 + i * 13, -34, 1, 42).fill({ color: 0x4a3520, alpha: 0.4 });
+      const color = CELL_COLORS[sprite.kind];
+      g.poly(outer).fill(0x2a2012);
+      g.poly(outer).stroke({ color: 0x1a1408, width: 2 });
+      g.poly(inner).fill(color);
+      // Inner highlight band.
+      g.poly(hexPoints(HEX - 9)).fill({ color: 0xffffff, alpha: 0.12 });
+
+      // Worker dot — a stylized bee body.
+      g.ellipse(0, 0, 6, 4).fill(sprite.kind === 'forager' ? 0xffd23f : 0x8a2a14);
+      g.rect(-3, -2, 1.6, 4).fill(0x1a1408);
+      g.rect(1.2, -2, 1.6, 4).fill(0x1a1408);
+      // Synergy pips around the rim — one per same-role neighbor.
+      for (let i = 0; i < sprite.synergy; i++) {
+        const a = (Math.PI / 3) * i - Math.PI / 2;
+        g.circle(Math.cos(a) * (HEX - 7), Math.sin(a) * (HEX - 7), 2).fill(0xfff2cf);
       }
-      // Door
-      g.roundRect(-8, -10, 16, 18, 2).fill(0x3a2a10);
-      // Hanging hammer/tool: handle + head
-      g.rect(18, -22, 2, 12).fill(0x3a2a10);
-      g.rect(14, -24, 10, 4).fill(0x8a8480);
-    }
-  }
-
-  private drawShadow(sprite: HiveSprite): void {
-    const g = sprite.shadow;
-    g.clear();
-    // Sit just below the hive's footprint so it reads as a ground shadow.
-    let dy = 24;
-    if (sprite.type === 'wax') dy = 9;
-    if (sprite.type === 'builder') dy = 12;
-    g.ellipse(0, dy, 38, 6).fill({ color: 0x000000, alpha: 0.28 });
-  }
-
-  private drawPollenPots(sprite: HiveSprite, pollen: number): void {
-    const g = sprite.pollenPots;
-    g.clear();
-    if (pollen <= 0) return;
-    const maxVisible = 6;
-    const shown = Math.min(maxVisible, pollen);
-    const startX = -25;
-    for (let i = 0; i < shown; i++) {
-      const x = startX + i * 10;
-      const y = 18;
-      g.roundRect(x - 4, y - 5, 8, 8, 2).fill(0x8b5a2b);
-      g.circle(x, y - 2, 3).fill(0xf5d166);
-    }
-    if (pollen > maxVisible) {
-      const overflow = Math.min(20, pollen - maxVisible);
-      for (let i = 0; i < overflow; i++) {
-        const px = startX + maxVisible * 10 + (i % 4) * 3;
-        const py = 18 - Math.floor(i / 4) * 3;
-        g.circle(px, py, 1.5).fill(0xf5d166);
-      }
-    }
-  }
-
-  private drawBlockStockpile(sprite: HiveSprite, blocks: number): void {
-    const g = sprite.blockStockpile;
-    g.clear();
-    if (blocks <= 0) return;
-    const maxVisible = 8;
-    const shown = Math.min(maxVisible, blocks);
-    for (let i = 0; i < shown; i++) {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      const cx = -42 + col * 10;
-      const cy = 12 - row * 8;
-      drawHex(g, cx, cy, 4);
     }
   }
 }
 
-function drawHex(g: Graphics, cx: number, cy: number, r: number): void {
-  const pts: number[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
-    pts.push(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-  }
-  g.poly(pts).fill(0xfff2cf).stroke({ color: 0xb89858, width: 1 });
+function kindOf(cell: HiveCell): CellKind {
+  if (cell.role === 'forager') return 'forager';
+  if (cell.role === 'excavator') return 'excavator';
+  return 'empty';
 }

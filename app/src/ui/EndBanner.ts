@@ -1,6 +1,7 @@
 import type { Game } from '../game/Game';
 
-// Shown after the journal is dismissed — MVP end-of-prototype message.
+// Shown when the colony has tethered to the legendary mylar balloon and
+// arrived at the sky flower.
 export class EndBanner {
   readonly el: HTMLDivElement;
 
@@ -8,8 +9,8 @@ export class EndBanner {
     this.el = document.createElement('div');
     this.el.className = 'end-banner panel';
     this.el.innerHTML = `
-      Thanks for trying the prototype!
-      <small>The journey begins. <a href="#" style="color:#f5d166;">Reset</a> to play again.</small>
+      The colony has reached the flower.
+      <small>We're staying. <a href="#" style="color:#f5d166;">Reset</a> to play again.</small>
     `;
     this.el.style.display = 'none';
     const link = this.el.querySelector('a')!;
@@ -21,7 +22,7 @@ export class EndBanner {
   }
 
   update(): void {
-    const reviewed = this.game.state.vessel.phase === 'reviewed';
-    this.el.style.display = reviewed ? '' : 'none';
+    const arrived = this.game.state.ascent.phase === 'arrived';
+    this.el.style.display = arrived ? '' : 'none';
   }
 }

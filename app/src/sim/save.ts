@@ -1,49 +1,43 @@
 import type { GameState } from './state';
 import { createInitialState } from './state';
 
-const STORAGE_KEY = 'gnorpbuzz.save.v1';
+// Bumped to v4 — the hex-cell hive rewrite changes the state shape
+// (hives[] → a single hive with cells). Older saves are simply ignored.
+const STORAGE_KEY = 'gnorpbuzz.save.v4';
+const LEGACY_KEYS = [
+  'gnorpbuzz.save.v1',
+  'gnorpbuzz.save.v2',
+  'gnorpbuzz.save.v3',
+];
 
 export function serialize(state: GameState): string {
   return JSON.stringify(state);
 }
 
 export function deserialize(blob: string): GameState {
-  const parsed = JSON.parse(blob) as Partial<GameState>;
-  const merged = { ...createInitialState(), ...parsed } as GameState;
-  // Migration: older saves don't have hive.built. Default forager always
-  // built; treat anything else as unbuilt unless it had bees in the save.
-  if (merged.hives) {
-    merged.hives = merged.hives.map((h) => {
-      if ((h as { built?: boolean }).built === undefined) {
-        const built = h.type === 'forager' ? true : h.bees > 0;
-        return { ...h, built } as typeof h;
-      }
-      return h;
-    });
+  const parsed = JSON.parse(blob) as Partial<GameState> & { hives?: unknown };
+  const base = createInitialState();
+
+  // A save carrying the old `hives[]` array (or no proper `hive`) is pre-v4
+  // and incompatible: fall back to a fresh state rather than half-merging.
+  if ('hives' in parsed || !parsed.hive || !Array.isArray(parsed.hive.cells)) {
+    return base;
   }
-  // Migration: journal.dismissedCount may be missing in older saves.
-  if (merged.journal && (merged.journal as { dismissedCount?: number }).dismissedCount === undefined) {
-    merged.journal.dismissedCount = merged.journal.pending
-      ? Math.max(0, merged.journal.entries.length - 1)
-      : merged.journal.entries.length;
-  }
+
+  const merged = { ...base, ...parsed } as GameState;
+
+  // Defensive defaults — fields that may be missing from partial saves.
+  if (!merged.flowers) merged.flowers = base.flowers;
+  // Flower claims are ephemeral runtime state — bees are recreated fresh on
+  // load, so any persisted claim count would be a stale ghost. Reset them.
+  for (const f of merged.flowers) f.claimants = 0;
+  if (!merged.digSite) merged.digSite = base.digSite;
+  if (!merged.artifacts) merged.artifacts = { revealed: [], pending: null };
+  if (!merged.journal)
+    merged.journal = { entries: [], pending: false, dismissedCount: 0 };
   if (!merged.upgrades) merged.upgrades = {};
-  if (typeof merged.launchCount !== 'number') merged.launchCount = 0;
-  // Migrations for Phase 2: vessel.tier, vessel.requiredNectar,
-  // hive.nectar, flower.kind, nectarUnlocked.
-  if (typeof merged.nectarUnlocked !== 'boolean') merged.nectarUnlocked = false;
-  if (typeof merged.vessel.tier !== 'number') merged.vessel.tier = 1;
-  if (typeof merged.vessel.requiredNectar !== 'number') merged.vessel.requiredNectar = 0;
-  for (const h of merged.hives) {
-    if (h.type === 'forager' && typeof h.nectar !== 'number') {
-      (h as { nectar?: number }).nectar = 0;
-    }
-  }
-  for (const f of merged.flowers) {
-    if (!('kind' in f) || (f.kind !== 'pollen' && f.kind !== 'nectar')) {
-      f.kind = 'pollen';
-    }
-  }
+  if (!merged.ascent) merged.ascent = { phase: 'none', timer: 0 };
+
   return merged;
 }
 
@@ -52,13 +46,15 @@ export function saveToStorage(state: GameState): void {
   try {
     localStorage.setItem(STORAGE_KEY, serialize(state));
   } catch {
-    // Storage may be full or disabled — non-fatal for MVP.
+    // ignore
   }
 }
 
 export function loadFromStorage(): GameState | null {
   if (typeof localStorage === 'undefined') return null;
   try {
+    // Drop any legacy v1 saves first so the user starts fresh on the new loop.
+    for (const k of LEGACY_KEYS) localStorage.removeItem(k);
     const blob = localStorage.getItem(STORAGE_KEY);
     if (!blob) return null;
     return deserialize(blob);
@@ -71,6 +67,7 @@ export function clearStorage(): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);
+    for (const k of LEGACY_KEYS) localStorage.removeItem(k);
   } catch {
     // ignore
   }

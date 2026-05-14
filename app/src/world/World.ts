@@ -1,43 +1,30 @@
 import type { GameState } from '../sim/state';
 import { HiveEntity } from './HiveEntity';
 import { FlowerEntity } from './FlowerEntity';
+import { DigSiteEntity } from './DigSiteEntity';
 import { ParticleSystem } from './ParticleSystem';
-import { WORLD, hiveSlotPosition } from './layout';
+import { WORLD } from './layout';
 
 // The world holds positioned, animated entities mirroring sim state.
-// Reconciled each tick: when sim state changes (new hive, more bees), the
-// world adjusts its entity set to match. Bee behaviors run inside update()
-// and may mutate sim state through callbacks (deposit pollen, deliver block).
+// Reconciled each tick: when sim state changes (cell assigned, more bees),
+// the world adjusts its entity set to match.
 
 export class World {
-  hives: Map<string, HiveEntity>;
+  hive: HiveEntity;
   flowers: Map<string, FlowerEntity>;
+  digSite: DigSiteEntity | null;
   particles: ParticleSystem;
 
   constructor() {
-    this.hives = new Map();
+    this.hive = new HiveEntity('hive');
     this.flowers = new Map();
+    this.digSite = null;
     this.particles = new ParticleSystem();
   }
 
   reconcile(state: GameState): void {
-    // Hives — match sim
-    state.hives.forEach((simHive, index) => {
-      let entity = this.hives.get(simHive.id);
-      if (!entity) {
-        const pos = hiveSlotPosition(index);
-        entity = new HiveEntity(simHive.id, simHive.type, index, pos.x, pos.y);
-        this.hives.set(simHive.id, entity);
-      }
-      while (entity.bees.length < simHive.bees) entity.spawnBee();
-      while (entity.bees.length > simHive.bees) entity.despawnBee();
-    });
-    const liveHiveIds = new Set(state.hives.map((h) => h.id));
-    for (const id of this.hives.keys()) {
-      if (!liveHiveIds.has(id)) this.hives.delete(id);
-    }
+    this.hive.reconcile(state.hive);
 
-    // Flowers — created from layout once; positions are stable.
     if (this.flowers.size === 0 || this.flowers.size !== state.flowers.length) {
       this.flowers.clear();
       state.flowers.forEach((simFlower, i) => {
@@ -45,18 +32,18 @@ export class World {
         this.flowers.set(simFlower.id, new FlowerEntity(simFlower.id, pos.x, pos.y, i * 47));
       });
     }
+
+    if (!this.digSite) {
+      this.digSite = new DigSiteEntity(state.digSite.id, WORLD.DIG_SITE.x, WORLD.DIG_SITE.y);
+    }
   }
 
   update(dtMs: number, state: GameState): void {
-    for (const hive of this.hives.values()) {
-      for (const bee of hive.bees) bee.update(dtMs, state, this);
+    for (const cell of this.hive.cells.values()) {
+      for (const bee of cell.bees) bee.update(dtMs, state, this);
+      cell.tickRespawn(dtMs, state);
     }
     this.particles.update(dtMs);
-  }
-
-  getHivePosition(hiveId: string): { x: number; y: number } | null {
-    const h = this.hives.get(hiveId);
-    return h ? { x: h.x, y: h.y } : null;
   }
 
   getFlowerPosition(flowerId: string): { x: number; y: number } | null {
@@ -66,14 +53,18 @@ export class World {
 
   snapshot() {
     return {
-      hives: Array.from(this.hives.values()).map((h) => ({
-        id: h.hiveId,
-        type: h.type,
-        x: h.x,
-        y: h.y,
-        bees: h.bees.length,
-      })),
-      flowers: Array.from(this.flowers.values()).length,
+      hive: {
+        id: this.hive.hiveId,
+        cells: Array.from(this.hive.cells.values()).map((c) => ({
+          q: c.q,
+          r: c.r,
+          role: c.role,
+          alive: c.bees.length,
+          respawning: c.respawnQueue.length,
+        })),
+      },
+      flowers: this.flowers.size,
+      digSite: this.digSite ? { x: this.digSite.x, y: this.digSite.y } : null,
     };
   }
 }

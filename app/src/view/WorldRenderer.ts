@@ -6,12 +6,12 @@ import { WorldView } from './WorldView';
 import { FlowerView } from './FlowerView';
 import { HiveView } from './HiveView';
 import { BeeView } from './BeeView';
-import { VesselView } from './VesselView';
+import { DigSiteView } from './DigSiteView';
 import { ParticleView } from './ParticleView';
 
 export interface WorldRendererCallbacks {
-  onHiveClick: (hiveId: string) => void;
-  onVesselClick: () => void;
+  onCellClick: (q: number, r: number) => void;
+  onDigSiteClick: () => void;
   onBackgroundClick: () => void;
 }
 
@@ -21,7 +21,7 @@ export class WorldRenderer {
   private flowerView: FlowerView;
   private hiveView: HiveView;
   private beeView: BeeView;
-  private vesselView: VesselView;
+  private digSiteView: DigSiteView;
   private particleView: ParticleView;
   private fitListeners: (() => void)[] = [];
 
@@ -30,20 +30,18 @@ export class WorldRenderer {
     this.root.eventMode = 'static';
     this.worldView = new WorldView();
     this.flowerView = new FlowerView();
-    this.hiveView = new HiveView(callbacks.onHiveClick);
+    this.hiveView = new HiveView(callbacks.onCellClick);
     this.beeView = new BeeView();
-    this.vesselView = new VesselView(callbacks.onVesselClick);
+    this.digSiteView = new DigSiteView(callbacks.onDigSiteClick);
     this.particleView = new ParticleView();
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
-    this.root.addChild(this.vesselView.container);
+    this.root.addChild(this.digSiteView.container);
     this.root.addChild(this.hiveView.container);
     this.root.addChild(this.beeView.container);
-    // Particles render on top so they're visible over hives/bees.
     this.root.addChild(this.particleView.container);
 
-    // Background click (anything not consumed by hive/airplane): deselect.
     this.worldView.container.eventMode = 'static';
     this.worldView.container.on('pointertap', () => callbacks.onBackgroundClick());
   }
@@ -64,11 +62,6 @@ export class WorldRenderer {
     for (const cb of this.fitListeners) cb();
   }
 
-  /** Convert world coordinates into CSS pixel coordinates over the canvas.
-   * Computed from the canvas's CSS dimensions to stay correct under any DPR
-   * (Windows display scaling, retina displays, etc.) — Pixi's renderer.width
-   * is already CSS-equivalent under autoDensity, so we use canvas.clientWidth
-   * directly to avoid double-applying the resolution. */
   worldToScreen(worldX: number, worldY: number, app: Application): { x: number; y: number } {
     const canvas = app.canvas;
     const cssW = canvas.clientWidth;
@@ -88,11 +81,17 @@ export class WorldRenderer {
     this.fitListeners.push(cb);
   }
 
-  update(state: GameState, world: World, dtMs: number, selectedId: string | null): void {
+  update(
+    state: GameState,
+    world: World,
+    dtMs: number,
+    selectedId: string | null,
+    selectedCell: { q: number; r: number } | null,
+  ): void {
     this.flowerView.update(state, world, dtMs);
-    this.hiveView.update(state, world, selectedId, dtMs);
+    this.hiveView.update(state, world, selectedCell, dtMs);
     this.beeView.update(world, state.elapsedMs);
-    this.vesselView.update(state, dtMs, selectedId === 'vessel', world);
+    this.digSiteView.update(state, dtMs, selectedId === 'dig-site');
     this.particleView.update(world.particles);
   }
 }

@@ -1,21 +1,23 @@
 import { Application, Container, Ticker } from 'pixi.js';
-import type { GameState, HiveType } from '../sim/state';
+import type { GameState, CellRole } from '../sim/state';
 import {
   createInitialState,
   totalPollen,
-  spendableWax,
-  nextBeeCost,
+  totalBees,
+  countRole,
+  nextWorkerCost,
+  digSiteHpPct,
 } from '../sim/state';
 import { flowerSystem } from '../sim/systems/flowers';
-import { vesselSystem } from '../sim/systems/vessel';
-import { launchSystem } from '../sim/systems/launch';
-import { journalSystem } from '../sim/systems/journal';
+import { digSiteSystem } from '../sim/systems/dig-sites';
+import { artifactSystem } from '../sim/systems/artifact';
+import { ascentSystem } from '../sim/systems/ascent';
 import {
-  buyBee,
-  dismissJournal,
-  launchVessel,
-  buildHive,
+  buyCell,
+  assignCell,
+  dismissArtifact,
   buyUpgrade,
+  damageDigSite,
 } from '../sim/actions';
 import type { UpgradeId } from '../sim/state';
 import type { ActionResult } from '../sim/actions';
@@ -30,14 +32,16 @@ export interface GameSnapshot {
   elapsedMs: number;
   paused: boolean;
   pollen: number;
-  wax: number;
-  hives: { id: string; type: string; bees: number; pollen?: number; waxBlocks?: number }[];
-  flowers: { id: string; yieldRemaining: number; regrowMs: number; claimed: boolean }[];
+  cells: { q: number; r: number; role: string | null }[];
   totalBees: number;
-  vessel: { delivered: number; required: number; phase: string };
+  foragers: number;
+  excavators: number;
+  digSite: { tier: number; hp: number; maxHp: number; state: string; hpPct: number };
+  artifacts: { revealed: string[]; pending: string | null };
   journal: { pending: boolean; entries: number };
+  ascent: { phase: string; timer: number };
   nextForagerCost: number;
-  nextWaxCost: number;
+  nextExcavatorCost: number;
 }
 
 export class Game {
@@ -49,12 +53,10 @@ export class Game {
   readonly renderer: WorldRenderer;
   ui?: UI;
 
-  // UI selection state — which hive (if any) is currently focused. Drives
-  // panel visibility and the in-world building highlight. Not part of the
-  // sim, not persisted in saves.
-  // Selection target — a hive id or the special VESSEL_ID. Drives panel
-  // visibility and the in-world highlight. Not part of the sim, not saved.
+  // UI selection. `selectedId` covers the dig site ('dig-site' or null);
+  // `selectedCell` is the hex cell the player has open in the cell panel.
   selectedId: string | null = null;
+  selectedCell: { q: number; r: number } | null = null;
 
   private paused = false;
   private skipRendering = false;
@@ -68,24 +70,48 @@ export class Game {
     this.observer = new Observer();
     this.world = new World();
     this.renderer = new WorldRenderer({
-      onHiveClick: (hiveId: string) => this.toggleSelection(hiveId),
-      onVesselClick: () => this.toggleSelection('vessel'),
-      onBackgroundClick: () => this.select(null),
+      onCellClick: (q: number, r: number) => this.toggleCell(q, r),
+      onDigSiteClick: () => this.toggleSelection('dig-site'),
+      onBackgroundClick: () => this.clearSelection(),
     });
     this.world.reconcile(this.state);
   }
 
-  // ---- UI state ----
-
-  select(id: string | null): void {
-    if (this.selectedId === id) return;
-    this.selectedId = id;
+  private notify(): void {
     this.observer.emit();
     if (this.ui) this.ui.update();
   }
 
+  select(id: string | null): void {
+    if (this.selectedId === id && this.selectedCell === null) return;
+    this.selectedId = id;
+    this.selectedCell = null;
+    this.notify();
+  }
+
   toggleSelection(id: string): void {
     this.select(this.selectedId === id ? null : id);
+  }
+
+  selectCell(q: number, r: number): void {
+    this.selectedCell = { q, r };
+    this.selectedId = null;
+    this.notify();
+  }
+
+  toggleCell(q: number, r: number): void {
+    if (this.selectedCell && this.selectedCell.q === q && this.selectedCell.r === r) {
+      this.clearSelection();
+    } else {
+      this.selectCell(q, r);
+    }
+  }
+
+  clearSelection(): void {
+    if (this.selectedId === null && this.selectedCell === null) return;
+    this.selectedId = null;
+    this.selectedCell = null;
+    this.notify();
   }
 
   async init(mount: HTMLElement): Promise<void> {
@@ -108,11 +134,11 @@ export class Game {
     flowerSystem(this.state, dtMs);
     this.world.reconcile(this.state);
     this.world.update(dtMs, this.state);
-    vesselSystem(this.state);
-    launchSystem(this.state, dtMs);
-    journalSystem(this.state);
+    digSiteSystem(this.state);
+    artifactSystem(this.state);
+    ascentSystem(this.state, dtMs);
     this.lastDeltaMs = dtMs;
-    this.renderer.update(this.state, this.world, dtMs, this.selectedId);
+    this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell);
     if (this.ui) this.ui.update();
   }
 
@@ -140,38 +166,33 @@ export class Game {
   }
 
   snapshot(): GameSnapshot {
-    const totalBees = this.state.hives.reduce((sum, h) => sum + h.bees, 0);
     return {
       tick: this.state.tick,
       elapsedMs: this.state.elapsedMs,
       paused: this.paused,
       pollen: totalPollen(this.state),
-      wax: spendableWax(this.state),
-      hives: this.state.hives.map((h) => ({
-        id: h.id,
-        type: h.type,
-        bees: h.bees,
-        pollen: h.type === 'forager' ? h.pollen : undefined,
-        waxBlocks: h.type === 'wax' ? h.waxBlocks : undefined,
-      })),
-      flowers: this.state.flowers.map((f) => ({
-        id: f.id,
-        yieldRemaining: f.yieldRemaining,
-        regrowMs: f.regrowTimerMs,
-        claimed: f.claimedByBeeId !== null,
-      })),
-      totalBees,
-      vessel: {
-        delivered: this.state.vessel.deliveredBlocks,
-        required: this.state.vessel.requiredBlocks,
-        phase: this.state.vessel.phase,
+      cells: this.state.hive.cells.map((c) => ({ q: c.q, r: c.r, role: c.role })),
+      totalBees: totalBees(this.state),
+      foragers: countRole(this.state, 'forager'),
+      excavators: countRole(this.state, 'excavator'),
+      digSite: {
+        tier: this.state.digSite.tier,
+        hp: this.state.digSite.hp,
+        maxHp: this.state.digSite.maxHp,
+        state: this.state.digSite.state,
+        hpPct: digSiteHpPct(this.state),
+      },
+      artifacts: {
+        revealed: [...this.state.artifacts.revealed],
+        pending: this.state.artifacts.pending,
       },
       journal: {
         pending: this.state.journal.pending,
         entries: this.state.journal.entries.length,
       },
-      nextForagerCost: nextBeeCost(this.state, 'forager'),
-      nextWaxCost: nextBeeCost(this.state, 'wax'),
+      ascent: { phase: this.state.ascent.phase, timer: this.state.ascent.timer },
+      nextForagerCost: nextWorkerCost(this.state, 'forager'),
+      nextExcavatorCost: nextWorkerCost(this.state, 'excavator'),
     };
   }
 
@@ -184,7 +205,7 @@ export class Game {
   render(): void {
     if (this.skipRendering) return;
     this.world.reconcile(this.state);
-    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedId);
+    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedId, this.selectedCell);
     this.app.renderer.render(this.app.stage);
   }
 
@@ -194,63 +215,39 @@ export class Game {
     return snap;
   }
 
-  // ---- Actions (UI-callable mutators) ----
+  // ---- Actions ----
 
-  buyBee(type: HiveType): ActionResult {
-    const result = buyBee(this.state, type);
+  private commit(result: ActionResult): ActionResult {
     if (result.ok) {
       saveToStorage(this.state);
-      this.observer.emit();
-      if (this.ui) this.ui.update();
+      this.notify();
     }
     return result;
   }
 
-  buildHive(type: HiveType): ActionResult {
-    const result = buildHive(this.state, type);
-    if (result.ok) {
-      saveToStorage(this.state);
-      this.observer.emit();
-      if (this.ui) this.ui.update();
-    }
-    return result;
+  buyCell(q: number, r: number): ActionResult {
+    return this.commit(buyCell(this.state, q, r));
+  }
+
+  assignCell(q: number, r: number, role: CellRole): ActionResult {
+    return this.commit(assignCell(this.state, q, r, role));
   }
 
   buyUpgrade(id: UpgradeId): ActionResult {
-    const result = buyUpgrade(this.state, id);
-    if (result.ok) {
-      saveToStorage(this.state);
-      this.observer.emit();
-      if (this.ui) this.ui.update();
-    }
-    return result;
-  }
-
-  launchVessel(): ActionResult {
-    const result = launchVessel(this.state);
-    if (result.ok) {
-      saveToStorage(this.state);
-      this.observer.emit();
-      if (this.ui) this.ui.update();
-    }
-    return result;
+    return this.commit(buyUpgrade(this.state, id));
   }
 
   dismissJournal(): ActionResult {
-    const result = dismissJournal(this.state);
-    if (result.ok) {
-      saveToStorage(this.state);
-      this.observer.emit();
-      if (this.ui) this.ui.update();
-    }
-    return result;
+    return this.commit(dismissArtifact(this.state));
   }
 
   resetGame(): void {
     clearStorage();
     this.state = createInitialState();
+    this.selectedId = null;
+    this.selectedCell = null;
     this.world.reconcile(this.state);
-    this.observer.emit();
+    this.notify();
   }
 
   attachDebugInterface(): void {
@@ -262,17 +259,58 @@ export class Game {
       advanceTicks: (n: number) => this.advanceTicks(n),
       render: () => this.render(),
       stepAndRender: (n: number) => this.stepAndRender(n),
-      buyForagerBee: () => this.buyBee('forager'),
-      buyWaxBee: () => this.buyBee('wax'),
-      buyBuilderBee: () => this.buyBee('builder'),
-      buildWaxHive: () => this.buildHive('wax'),
-      buildBuilderHive: () => this.buildHive('builder'),
-      launchVessel: () => this.launchVessel(),
+      buyCell: (q: number, r: number) => this.buyCell(q, r),
+      assignCell: (q: number, r: number, role: CellRole) => this.assignCell(q, r, role),
+      buyUpgrade: (id: UpgradeId) => this.buyUpgrade(id),
       dismissJournal: () => this.dismissJournal(),
+      damageDigSite: (amount: number) => this.commit(damageDigSite(this.state, amount)),
+      grantPollen: (amount: number) => {
+        this.state.hive.pollen += amount;
+        saveToStorage(this.state);
+        this.notify();
+        return { ok: true };
+      },
+      worldBees: () => {
+        const result: { q: number; r: number; role: string; alive: number; respawning: number }[] = [];
+        for (const cell of this.world.hive.cells.values()) {
+          result.push({
+            q: cell.q,
+            r: cell.r,
+            role: cell.role,
+            alive: cell.bees.length,
+            respawning: cell.respawnQueue.length,
+          });
+        }
+        return result;
+      },
+      beeStates: () => {
+        const out: { id: string; role: string; state: string; target: string | null; cell: string }[] = [];
+        for (const cell of this.world.hive.cells.values()) {
+          for (const bee of cell.bees) {
+            out.push({
+              id: bee.id,
+              role: bee.role,
+              state: bee.state,
+              target: bee.targetFlowerId,
+              cell: `${cell.q},${cell.r}`,
+            });
+          }
+        }
+        return out;
+      },
+      flowerClaims: () =>
+        this.state.flowers.map((f) => ({
+          id: f.id,
+          yield: f.yieldRemaining,
+          claimants: f.claimants,
+          regrowMs: Math.round(f.regrowTimerMs),
+        })),
       resetGame: () => this.resetGame(),
       worldSnapshot: () => this.world.snapshot(),
       select: (id: string | null) => this.select(id),
+      selectCell: (q: number, r: number) => this.selectCell(q, r),
       selectedId: () => this.selectedId,
+      selectedCell: () => this.selectedCell,
     };
     (window as unknown as { debug: typeof dbg }).debug = dbg;
   }
