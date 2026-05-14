@@ -22,8 +22,9 @@ export const WORLD = {
   DIG_SITE_RADIUS: 120,
 
   // The single Hive — a honeycomb of hex cells. This is the world-space
-  // center of the comb (the Queen cell sits here); cells fan outward.
-  HIVE: { x: 410, y: 470 },
+  // center of the comb; cells fan outward. Sits toward the left edge so
+  // the comb has its own space, well clear of the dig site on the right.
+  HIVE: { x: 230, y: 470 },
   // Hex cell "size" — the center-to-corner radius. Pointy-top orientation.
   HEX_SIZE: 26,
 

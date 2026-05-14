@@ -1,7 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import type { World } from '../world/World';
 import type { GameState, HiveCell } from '../sim/state';
-import { buyableCells, cellSynergy } from '../sim/state';
+import { buyableCells, cellSynergy, hexDistance, TUNING } from '../sim/state';
 import { WORLD, hexToWorld } from '../world/layout';
 
 // Renders the Hive as a honeycomb of hex cells. Each cell is one of:
@@ -34,6 +34,19 @@ function hexPoints(size: number): number[] {
   return pts;
 }
 
+// A hexagon outline at an absolute position. `flatTop` rotates it so a flat
+// edge faces up — the orientation of the macro-comb formed by pointy-top
+// cells, used for the hive shell so it frames the comb uniformly.
+function hexOutline(size: number, cx: number, cy: number, flatTop: boolean): number[] {
+  const pts: number[] = [];
+  const base = flatTop ? 0 : -30;
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 180) * (60 * i + base);
+    pts.push(cx + Math.cos(a) * size, cy + Math.sin(a) * size);
+  }
+  return pts;
+}
+
 const CELL_COLORS: Record<'forager' | 'excavator', number> = {
   forager: 0xe8b04c,
   excavator: 0xc94a2a,
@@ -49,6 +62,8 @@ export class HiveView {
   private selectionGfx: Graphics;
   private onCellClick: (q: number, r: number) => void;
   private pulse = 0;
+  // Backdrop is redrawn only when the comb's outermost ring changes.
+  private combRadius = -1;
 
   constructor(onCellClick: (q: number, r: number) => void) {
     this.container = new Container();
@@ -58,7 +73,6 @@ export class HiveView {
     this.container.addChild(this.selectionGfx);
     this.sprites = new Map();
     this.onCellClick = onCellClick;
-    this.drawBackdrop();
   }
 
   update(
@@ -68,6 +82,19 @@ export class HiveView {
     dtMs: number,
   ): void {
     this.pulse += dtMs / 1000;
+
+    // Redraw the hive shell when the comb's outermost ring changes. The
+    // shell extends one ring past the unlocked comb (capped at the comb's
+    // max radius) so the buyable frontier cells sit inside the husk.
+    let maxRing = 1;
+    for (const c of state.hive.cells) {
+      maxRing = Math.max(maxRing, hexDistance(c.q, c.r));
+    }
+    const shellRing = Math.min(maxRing + 1, TUNING.MAX_COMB_RADIUS);
+    if (shellRing !== this.combRadius) {
+      this.combRadius = shellRing;
+      this.drawBackdrop(shellRing);
+    }
 
     // Build the desired set of cells: every sim cell, plus the buyable
     // frontier.
@@ -151,13 +178,39 @@ export class HiveView {
       .stroke({ color: 0xfff2cf, width: 3, alpha: 0.95 });
   }
 
-  private drawBackdrop(): void {
-    // A soft earthy mound the comb nestles into, plus a ground shadow.
+  // The hive shell behind the comb — a waxy hexagonal husk with a peaked
+  // roof and an entrance hole, sized to frame the current comb so the grid
+  // reads as living inside a beehive rather than floating in space.
+  private drawBackdrop(radius: number): void {
     const g = this.backdrop;
     g.clear();
     const { x, y } = WORLD.HIVE;
-    g.ellipse(x, y + HEX * 2.6, HEX * 5.4, HEX * 1.5).fill({ color: 0x000000, alpha: 0.22 });
-    g.ellipse(x, y + HEX * 1.4, HEX * 4.6, HEX * 2.8).fill({ color: 0x3a2a16, alpha: 0.55 });
+    // World-space reach of the comb, plus a rim so the shell frames it.
+    const reach = HEX * Math.sqrt(3) * radius;
+    const shell = reach + HEX * 1.9;
+
+    // A flat-top hexagon's top/bottom flat edges sit at ±sin(60°)·shell.
+    const edgeY = shell * 0.866;
+
+    // Ground shadow.
+    g.ellipse(x, y + edgeY + HEX * 0.5, shell * 1.0, shell * 0.18)
+      .fill({ color: 0x000000, alpha: 0.3 });
+
+    // Peaked roof cap sitting flush on the top edge.
+    g.poly([
+      x - shell * 0.5, y - edgeY + 3,
+      x, y - edgeY - HEX * 1.1,
+      x + shell * 0.5, y - edgeY + 3,
+    ])
+      .fill(0x6e4a22)
+      .stroke({ color: 0x3a2510, width: 2 });
+
+    // Hive shell — a flat-top hexagon (the comb's macro outline) with a
+    // dark husk rim and a warm wax body.
+    g.poly(hexOutline(shell, x, y, true)).fill(0x241708);
+    g.poly(hexOutline(shell - 5, x, y, true))
+      .fill(0xb9863c)
+      .stroke({ color: 0xd4a857, width: 2, alpha: 0.55 });
   }
 
   private drawCell(sprite: CellSprite): void {
