@@ -70,6 +70,7 @@ export class Game {
     this.observer = new Observer();
     this.world = new World();
     this.renderer = new WorldRenderer({
+      onHiveClick: () => this.select('hive'),
       onCellClick: (q: number, r: number) => this.toggleCell(q, r),
       onDigSiteClick: () => this.toggleSelection('dig-site'),
       onBackgroundClick: () => this.clearSelection(),
@@ -101,7 +102,9 @@ export class Game {
 
   toggleCell(q: number, r: number): void {
     if (this.selectedCell && this.selectedCell.q === q && this.selectedCell.r === r) {
-      this.clearSelection();
+      // Closing a cell's panel falls back to the whole-hive selection so
+      // the camera stays zoomed in — leaving the hive is a separate action.
+      this.select('hive');
     } else {
       this.selectCell(q, r);
     }
@@ -112,6 +115,11 @@ export class Game {
     this.selectedId = null;
     this.selectedCell = null;
     this.notify();
+  }
+
+  // True when the camera is (or is heading) zoomed into the hive.
+  get isZoomedIn(): boolean {
+    return this.selectedCell !== null || this.selectedId === 'hive';
   }
 
   async init(mount: HTMLElement): Promise<void> {
@@ -126,6 +134,12 @@ export class Game {
     this.app.stage.addChild(this.stage);
     this.renderer.attach(this.app, this.stage, this.world);
     this.app.ticker.add(this.boundUpdate);
+
+    // Esc backs out of any selection — a natural way to leave the
+    // zoomed-in hive view.
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this.clearSelection();
+    });
   }
 
   private runSystems(dtMs: number): void {

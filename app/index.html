@@ -21,6 +21,23 @@
       }
       .resource-bar .icon { font-size: 22px; }
 
+      /* Zoom-out / overview button — shown only while zoomed into the hive. */
+      .zoom-out-btn {
+        position: absolute;
+        top: 64px; left: 16px;
+        background: rgba(20, 14, 6, 0.8);
+        color: #f0e9d2;
+        border: 1px solid rgba(245, 209, 102, 0.3);
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 13px; font-weight: 600;
+        cursor: pointer;
+        backdrop-filter: blur(4px);
+        transition: background 120ms ease;
+      }
+      .zoom-out-btn:hover { background: rgba(40, 28, 12, 0.92); }
+      .zoom-out-btn.hidden { display: none; }
+
       /* Cell panel — world-anchored popover above the selected hex cell. */
       .cell-panel {
         position: absolute;

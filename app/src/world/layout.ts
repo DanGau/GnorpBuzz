@@ -22,11 +22,14 @@ export const WORLD = {
   DIG_SITE_RADIUS: 120,
 
   // The single Hive — a honeycomb of hex cells. This is the world-space
-  // center of the comb; cells fan outward. Sits toward the left edge so
-  // the comb has its own space, well clear of the dig site on the right.
-  HIVE: { x: 230, y: 470 },
+  // center of the comb; cells fan outward. The comb is deliberately a
+  // small structure in the world — dwarfed by the boulder — so the colony
+  // reads as taking on a monumental task. The `hive` camera framing zooms
+  // in when it's selected so the cells become workable.
+  HIVE: { x: 250, y: 545 },
   // Hex cell "size" — the center-to-corner radius. Pointy-top orientation.
-  HEX_SIZE: 26,
+  // Small on purpose; see the note on HIVE above.
+  HEX_SIZE: 10,
 
   // Decorative meadow flowers — clustered on the LEFT half of the meadow
   // away from the boulder. Twelve positions so larger colonies have enough

@@ -1,5 +1,6 @@
 import type { Game } from '../game/Game';
 import { artifactForTier, digSiteHpPct, ARTIFACTS } from '../sim/state';
+import { WORLD } from '../world/layout';
 
 // Compact progress panel anchored above the dig site. Visible only when the
 // player selects the dig site. Shows site tier + HP bar + a teaser of the
@@ -29,14 +30,19 @@ export class ArtifactProgress {
     this.el.addEventListener('click', (e) => e.stopPropagation());
   }
 
-  reposition(screenX: number, screenY: number): void {
-    this.el.style.left = `${screenX}px`;
-    this.el.style.top = `${screenY}px`;
-  }
-
   update(): void {
     const selected = this.game.selectedId === 'dig-site';
     this.el.classList.toggle('hidden', !selected);
+
+    // Anchor above the boulder in screen space — recomputed each frame so
+    // it tracks the camera as it pans/zooms.
+    const above = this.game.renderer.worldToScreen(
+      WORLD.DIG_SITE.x,
+      WORLD.DIG_SITE.y - WORLD.DIG_SITE_RADIUS - 40,
+      this.game.app,
+    );
+    this.el.style.left = `${above.x}px`;
+    this.el.style.top = `${above.y}px`;
 
     const site = this.game.state.digSite;
     const spec = artifactForTier(site.tier);
