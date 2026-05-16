@@ -38,65 +38,6 @@
       .zoom-out-btn:hover { background: rgba(40, 28, 12, 0.92); }
       .zoom-out-btn.hidden { display: none; }
 
-      /* Cell panel — world-anchored popover above the selected hex cell. */
-      .cell-panel {
-        position: absolute;
-        transform: translate(-50%, -100%);
-        margin-top: -12px;
-        background: rgba(20, 14, 6, 0.9);
-        border-radius: 10px;
-        backdrop-filter: blur(6px);
-        min-width: 200px; max-width: 240px;
-        padding: 10px 12px 12px;
-        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-        opacity: 1;
-        transition:
-          opacity 150ms ease,
-          transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
-        pointer-events: auto;
-      }
-      /* ID-scoped so it beats `#ui .panel { pointer-events: auto }` —
-         otherwise a hidden (opacity:0) panel still swallows clicks. */
-      #ui .cell-panel.hidden {
-        opacity: 0;
-        transform: translate(-50%, calc(-100% + 8px)) scale(0.92);
-        pointer-events: none;
-      }
-      .cell-panel .cp-title {
-        color: #f0e9d2; font-size: 14px; font-weight: 700;
-        letter-spacing: 0.02em; margin-bottom: 6px;
-      }
-      .cell-panel .cp-note { color: #b8ad8c; font-size: 12px; margin-bottom: 8px; }
-      .cell-panel .cp-synergy {
-        color: #cfc6a8; font-size: 12px; margin-bottom: 8px;
-      }
-      .cell-panel .cp-synergy b { color: #f5d166; }
-      .cell-panel .cp-actions { display: flex; flex-direction: column; gap: 6px; }
-      .cell-panel .cp-btn {
-        display: block; width: 100%; box-sizing: border-box;
-        padding: 8px 10px; border: none; border-radius: 6px;
-        font-size: 12px; font-weight: 600; cursor: pointer;
-        text-align: center; transition: filter 120ms ease;
-        background: #5a4a30; color: #f0e9d2;
-      }
-      .cell-panel .cp-btn:hover:not(:disabled) { filter: brightness(1.18); }
-      .cell-panel .cp-btn:disabled {
-        background: #3a2f1d; color: #6e6450; cursor: not-allowed;
-      }
-      .cell-panel .cp-btn.unlock { background: #d49a36; color: #2a1f0a; }
-      .cell-panel .cp-btn.forager { background: #e8b04c; color: #2a1f0a; }
-      .cell-panel .cp-btn.excavator { background: #c94a2a; color: #fbe6dd; }
-      .cell-panel .cp-btn.clear { background: #4a3a2a; color: #d8cdb0; }
-      .cell-panel .caret {
-        position: absolute;
-        left: 50%; bottom: -7px;
-        transform: translateX(-50%);
-        width: 0; height: 0;
-        border-left: 8px solid transparent;
-        border-right: 8px solid transparent;
-        border-top: 8px solid rgba(20, 14, 6, 0.9);
-      }
-
       /* Colony panel — docked on the right edge. The centralized upgrade hub. */
       .colony-panel {
         position: absolute;

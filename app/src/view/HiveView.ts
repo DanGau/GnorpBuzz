@@ -1,4 +1,4 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Text } from 'pixi.js';
 import type { World } from '../world/World';
 import type { GameState, HiveCell } from '../sim/state';
 import { buyableCells, cellSynergy, hexDistance, TUNING } from '../sim/state';
@@ -25,7 +25,16 @@ interface CellSprite {
   synergy: number;
   base: Graphics;
   hit: Graphics;
+  glyph: Text | null;
 }
+
+// Match the radial menu's worker glyphs so the shop icon and the cell icon
+// read as the same thing.
+const ROLE_GLYPH: Record<'forager' | 'excavator', string> = {
+  forager: '🌼',
+  excavator: '⛏',
+};
+const GLYPH_SUPERSAMPLE = 6;
 
 const HEX = WORLD.HEX_SIZE;
 
@@ -74,8 +83,6 @@ export class HiveView {
   private pulse = 0;
   // Backdrop is redrawn only when the comb's outermost ring changes.
   private combRadius = -1;
-  // True when the camera is zoomed into the hive — per-cell clicking is on.
-  private cellsInteractive = false;
 
   constructor(
     onCellClick: (q: number, r: number) => void,
@@ -95,9 +102,10 @@ export class HiveView {
     this.hiveHit.eventMode = 'static';
     this.hiveHit.on('pointertap', (e) => {
       e.stopPropagation();
-      // Zoomed out: clicking anywhere on the hive zooms in. Zoomed in: this
-      // just absorbs clicks on the shell gaps so they don't deselect.
-      if (!this.cellsInteractive) this.onHiveClick();
+      // Zoomed out: zooms into the hive. Zoomed in: fires onHiveClick which
+      // demotes any cell selection to whole-hive (closes the radial menu)
+      // — Game.select('hive') no-ops when already on hive with no cell.
+      this.onHiveClick();
     });
     this.container.addChild(this.hiveHit);
 
@@ -115,7 +123,6 @@ export class HiveView {
     dtMs: number,
   ): void {
     this.pulse += dtMs / 1000;
-    this.cellsInteractive = cellsInteractive;
     this.hiveHit.cursor = cellsInteractive ? 'default' : 'pointer';
     // Overview shows a solid honeycomb; the interactive cell grid only
     // appears once the camera has zoomed in.
@@ -151,6 +158,10 @@ export class HiveView {
         this.container.removeChild(sprite.base, sprite.hit);
         sprite.base.destroy();
         sprite.hit.destroy();
+        if (sprite.glyph) {
+          this.container.removeChild(sprite.glyph);
+          sprite.glyph.destroy();
+        }
         this.sprites.delete(key);
       }
     }
@@ -183,6 +194,7 @@ export class HiveView {
           synergy: -1,
           base,
           hit,
+          glyph: null,
         };
         this.sprites.set(key, sprite);
       }
@@ -191,6 +203,7 @@ export class HiveView {
       // the overview shows the generic honeycomb fill instead.
       sprite.hit.eventMode = cellsInteractive ? 'static' : 'none';
       sprite.base.visible = cellsInteractive;
+      if (sprite.glyph) sprite.glyph.visible = cellsInteractive;
 
       const synergy =
         want.kind === 'forager' || want.kind === 'excavator'
@@ -290,6 +303,10 @@ export class HiveView {
     const inner = hexPoints(HEX * 0.808);
     const strokeMain = HEX * 0.077;
 
+    if (sprite.kind === 'buyable' || sprite.kind === 'empty') {
+      this.removeGlyphIfAny(sprite);
+    }
+
     if (sprite.kind === 'buyable') {
       // Faint outline + a pulsing "+" to invite expansion.
       const breath = 0.45 + Math.sin(this.pulse * 3) * 0.18;
@@ -309,18 +326,15 @@ export class HiveView {
       return;
     }
 
-    // Worker cell — forager or excavator.
+    // Worker cell — forager or excavator. The glyph (flower / pickaxe)
+    // replaces the old bee dot so the cell icon matches the shop's option.
     const color = CELL_COLORS[sprite.kind];
     g.poly(outer).fill(0x2a2012);
     g.poly(outer).stroke({ color: 0x1a1408, width: strokeMain });
     g.poly(inner).fill(color);
     g.poly(hexPoints(HEX * 0.654)).fill({ color: 0xffffff, alpha: 0.12 });
 
-    // Worker dot — a stylized bee body.
-    g.ellipse(0, 0, HEX * 0.231, HEX * 0.154)
-      .fill(sprite.kind === 'forager' ? 0xffd23f : 0x8a2a14);
-    g.rect(-HEX * 0.115, -HEX * 0.077, HEX * 0.062, HEX * 0.154).fill(0x1a1408);
-    g.rect(HEX * 0.046, -HEX * 0.077, HEX * 0.062, HEX * 0.154).fill(0x1a1408);
+    this.ensureGlyph(sprite, ROLE_GLYPH[sprite.kind]);
 
     // Synergy pips around the rim — one per same-role neighbor.
     for (let i = 0; i < sprite.synergy; i++) {
@@ -328,6 +342,39 @@ export class HiveView {
       g.circle(Math.cos(a) * HEX * 0.731, Math.sin(a) * HEX * 0.731, HEX * 0.077)
         .fill(0xfff2cf);
     }
+  }
+
+  // Lazily attach a Text glyph to the cell sprite — rasterized at SUPERSAMPLE×
+  // the world-unit font size and scaled down, so it stays crisp under the
+  // hive camera's zoom. Glyph follows the sprite position.
+  private ensureGlyph(sprite: CellSprite, glyphChar: string): void {
+    if (!sprite.glyph) {
+      const t = new Text({
+        text: glyphChar,
+        style: {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: HEX * 0.85 * GLYPH_SUPERSAMPLE,
+          fontWeight: '700',
+          fill: 0x1a1408,
+          align: 'center',
+        },
+      });
+      t.anchor.set(0.5);
+      t.scale.set(1 / GLYPH_SUPERSAMPLE);
+      t.x = sprite.base.x;
+      t.y = sprite.base.y;
+      this.container.addChild(t);
+      sprite.glyph = t;
+    } else if (sprite.glyph.text !== glyphChar) {
+      sprite.glyph.text = glyphChar;
+    }
+  }
+
+  private removeGlyphIfAny(sprite: CellSprite): void {
+    if (!sprite.glyph) return;
+    this.container.removeChild(sprite.glyph);
+    sprite.glyph.destroy();
+    sprite.glyph = null;
   }
 }
 

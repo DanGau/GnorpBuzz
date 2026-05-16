@@ -9,12 +9,15 @@ import { HiveView } from './HiveView';
 import { BeeView } from './BeeView';
 import { DigSiteView } from './DigSiteView';
 import { ParticleView } from './ParticleView';
+import { CellRadialView } from './CellRadialView';
 
 export interface WorldRendererCallbacks {
   onHiveClick: () => void;
   onCellClick: (q: number, r: number) => void;
   onDigSiteClick: () => void;
   onBackgroundClick: () => void;
+  onBuyCell: (q: number, r: number) => void;
+  onAssignCell: (q: number, r: number, role: import('../sim/state').CellRole) => void;
 }
 
 interface Framing {
@@ -33,6 +36,7 @@ export class WorldRenderer {
   private beeView: BeeView;
   private digSiteView: DigSiteView;
   private particleView: ParticleView;
+  private cellRadialView: CellRadialView;
   private fitListeners: (() => void)[] = [];
 
   private app!: Application;
@@ -54,6 +58,10 @@ export class WorldRenderer {
     this.beeView = new BeeView();
     this.digSiteView = new DigSiteView(callbacks.onDigSiteClick);
     this.particleView = new ParticleView();
+    this.cellRadialView = new CellRadialView({
+      onBuyCell: callbacks.onBuyCell,
+      onAssignCell: callbacks.onAssignCell,
+    });
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
@@ -61,6 +69,7 @@ export class WorldRenderer {
     this.root.addChild(this.hiveView.container);
     this.root.addChild(this.beeView.container);
     this.root.addChild(this.particleView.container);
+    this.root.addChild(this.cellRadialView.container);
 
     this.worldView.container.eventMode = 'static';
     this.worldView.container.on('pointertap', () => callbacks.onBackgroundClick());
@@ -180,5 +189,6 @@ export class WorldRenderer {
     this.beeView.update(world, state.elapsedMs);
     this.digSiteView.update(state, dtMs, selectedId === 'dig-site');
     this.particleView.update(world.particles);
+    this.cellRadialView.update(state, selectedCell, dtMs);
   }
 }

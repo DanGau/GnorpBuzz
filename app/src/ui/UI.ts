@@ -1,6 +1,5 @@
 import type { Game } from '../game/Game';
 import { ResourceBar } from './ResourceBar';
-import { CellPanel } from './CellPanel';
 import { ColonyPanel } from './ColonyPanel';
 import { ArtifactProgress } from './ArtifactProgress';
 import { ZoomOutButton } from './ZoomOutButton';
@@ -12,7 +11,6 @@ export class UI {
 
   constructor(game: Game, mount: HTMLElement) {
     const resourceBar = new ResourceBar(game);
-    const cellPanel = new CellPanel(game);
     const colonyPanel = new ColonyPanel(game);
     const artifactProgress = new ArtifactProgress(game);
     const zoomOut = new ZoomOutButton(game);
@@ -21,7 +19,6 @@ export class UI {
 
     mount.appendChild(resourceBar.el);
     mount.appendChild(colonyPanel.el);
-    mount.appendChild(cellPanel.el);
     mount.appendChild(artifactProgress.el);
     mount.appendChild(zoomOut.el);
     mount.appendChild(journal.el);
@@ -30,7 +27,6 @@ export class UI {
     this.widgets = [
       resourceBar,
       colonyPanel,
-      cellPanel,
       artifactProgress,
       zoomOut,
       journal,

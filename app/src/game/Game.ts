@@ -73,7 +73,9 @@ export class Game {
       onHiveClick: () => this.select('hive'),
       onCellClick: (q: number, r: number) => this.toggleCell(q, r),
       onDigSiteClick: () => this.toggleSelection('dig-site'),
-      onBackgroundClick: () => this.clearSelection(),
+      onBackgroundClick: () => this.stepOutSelection(),
+      onBuyCell: (q: number, r: number) => this.buyCell(q, r),
+      onAssignCell: (q: number, r: number, role: CellRole) => this.assignCell(q, r, role),
     });
     this.world.reconcile(this.state);
   }
@@ -117,6 +119,18 @@ export class Game {
     this.notify();
   }
 
+  // Step out one selection layer: a click outside the radial menu closes it
+  // (cell → hive), but a second click is needed to leave the zoomed-in hive
+  // (hive → overview). Prevents one stray click from rocketing the camera
+  // out from under the player.
+  stepOutSelection(): void {
+    if (this.selectedCell !== null) {
+      this.select('hive');
+    } else {
+      this.clearSelection();
+    }
+  }
+
   // True when the camera is (or is heading) zoomed into the hive.
   get isZoomedIn(): boolean {
     return this.selectedCell !== null || this.selectedId === 'hive';
@@ -138,7 +152,7 @@ export class Game {
     // Esc backs out of any selection — a natural way to leave the
     // zoomed-in hive view.
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this.clearSelection();
+      if (e.key === 'Escape') this.stepOutSelection();
     });
   }
 
