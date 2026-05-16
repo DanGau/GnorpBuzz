@@ -2,13 +2,11 @@ import { Container, Graphics } from 'pixi.js';
 import type { CellRole, GameState } from '../sim/state';
 import {
   cellAt,
-  cellSynergy,
   isCellBuyable,
   mustPlaceForager,
   cellCost,
   nextWorkerCost,
   totalPollen,
-  TUNING,
 } from '../sim/state';
 import { hexToWorld, WORLD } from '../world/layout';
 import { RadialMenu, type RadialOption } from '../ui/pixi/RadialMenu';
@@ -70,8 +68,8 @@ export class CellRadialView {
     } else {
       const anchor = hexToWorld(selectedCell.q, selectedCell.r);
       const outward = outwardDirection(selectedCell.q, selectedCell.r, anchor);
-      const config = configureMenu(state, selectedCell.q, selectedCell.r, this.callbacks);
-      this.menu.show(anchor, outward, config.title, config.options);
+      const options = configureMenu(state, selectedCell.q, selectedCell.r, this.callbacks);
+      this.menu.show(anchor, outward, options);
       this.targetOverlayAlpha = OVERLAY_ALPHA;
     }
 
@@ -85,42 +83,31 @@ export class CellRadialView {
   }
 }
 
-interface MenuConfig {
-  title: string;
-  options: RadialOption[];
-}
-
 function configureMenu(
   state: GameState,
   q: number,
   r: number,
   cb: CellRadialCallbacks,
-): MenuConfig {
+): RadialOption[] {
   const cell = cellAt(state.hive, q, r);
 
   if (!cell) {
     if (isCellBuyable(state.hive, q, r)) {
       const cost = cellCost(q, r);
       const affordable = totalPollen(state) >= cost;
-      return {
-        title: 'Locked Comb Cell',
-        options: [
-          {
-            id: 'unlock',
-            title: 'Unlock',
-            detail: costLabel(cost),
-            glyph: '+',
-            color: 0xf5d166,
-            enabled: affordable,
-            onSelect: () => cb.onBuyCell(q, r),
-          },
-        ],
-      };
+      return [
+        {
+          id: 'unlock',
+          title: 'Unlock',
+          detail: costLabel(cost),
+          glyph: '+',
+          color: 0xf5d166,
+          enabled: affordable,
+          onSelect: () => cb.onBuyCell(q, r),
+        },
+      ];
     }
-    return {
-      title: 'Locked — not adjacent',
-      options: [],
-    };
+    return [];
   }
 
   if (cell.role === null) {
@@ -150,27 +137,11 @@ function configureMenu(
         onSelect: () => cb.onAssignCell(q, r, 'excavator'),
       });
     }
-    return {
-      title: firstOnly ? 'First worker — Forager only' : 'Empty Cell',
-      options: opts,
-    };
+    return opts;
   }
 
-  // Filled cell — info only.
-  const role = cell.role;
-  const synergy = cellSynergy(state.hive, q, r);
-  const bonusPct =
-    role === 'forager'
-      ? Math.round(TUNING.SYNERGY_FORAGER_SPEED * synergy * 100)
-      : Math.round(TUNING.SYNERGY_EXCAVATOR_DAMAGE * synergy * 100);
-  const bonusLabel =
-    role === 'forager' ? `+${bonusPct}% speed` : `+${bonusPct}% damage`;
-  const roleName = role === 'forager' ? 'Forager' : 'Excavator';
-  const neighborLabel = `${synergy} neighbor${synergy === 1 ? '' : 's'}`;
-  return {
-    title: `${roleName} · ${neighborLabel} · ${bonusLabel}`,
-    options: [],
-  };
+  // Filled cell — no actions; cell visuals already convey role + synergy.
+  return [];
 }
 
 // Outward direction = from comb center to the selected cell. For the very

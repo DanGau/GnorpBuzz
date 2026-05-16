@@ -51,9 +51,6 @@ const TEXT_SUPERSAMPLE = 6;
 
 export class RadialMenu {
   readonly container: Container;
-  private titleBubble: Container;
-  private titleHex: Graphics;
-  private titleText: Text;
   private items = new Map<string, Item>();
   private order: string[] = [];
   private anchorX = 0;
@@ -74,12 +71,6 @@ export class RadialMenu {
     this.container = new Container();
     this.container.visible = false;
     this.container.eventMode = 'static';
-
-    this.titleBubble = new Container();
-    this.titleHex = new Graphics();
-    this.titleText = makeCrispText('', titleStyle(opts.hexSize));
-    this.titleBubble.addChild(this.titleHex, this.titleText);
-    this.container.addChild(this.titleBubble);
   }
 
   // Configure or update the menu. If the option ids match the current set,
@@ -88,7 +79,6 @@ export class RadialMenu {
   show(
     anchor: { x: number; y: number },
     outward: { x: number; y: number },
-    title: string,
     options: RadialOption[],
   ): void {
     this.anchorX = anchor.x;
@@ -104,14 +94,6 @@ export class RadialMenu {
 
     this.container.x = this.anchorX;
     this.container.y = this.anchorY;
-
-    this.titleText.text = title;
-    this.drawTitleBubble();
-    // Title sits perpendicular to the fan axis (rotated 90° CW) so it never
-    // collides with either the parent cell or the children fanning outward.
-    const titleDist = this.opts.hexSize * 4.6;
-    this.titleBubble.x = -this.dirY * titleDist;
-    this.titleBubble.y = this.dirX * titleDist;
 
     const sig = options.map((o) => o.id).join('|');
     if (sig !== this.signature) {
@@ -147,7 +129,6 @@ export class RadialMenu {
     this.animMs = Math.min(ANIM_MS, this.animMs + dtMs);
     const t = this.animMs / ANIM_MS;
     const opening = this.state === 'opening' || this.state === 'open';
-    const progress = opening ? easeOutBack(t) : 1 - easeInCubic(t);
     const alpha = opening ? Math.min(1, t * 1.6) : 1 - t;
 
     for (let i = 0; i < this.order.length; i++) {
@@ -164,8 +145,6 @@ export class RadialMenu {
       item.container.scale.set(scale);
       item.container.alpha = alpha;
     }
-    this.titleBubble.alpha = alpha;
-    this.titleBubble.scale.set(0.3 + 0.7 * progress);
 
     if (this.animMs >= ANIM_MS) {
       if (this.state === 'opening') {
@@ -283,18 +262,6 @@ export class RadialMenu {
     }
   }
 
-  private drawTitleBubble(): void {
-    const g = this.titleHex;
-    g.clear();
-    const padX = this.opts.hexSize * 0.4;
-    const padY = this.opts.hexSize * 0.22;
-    const w = this.titleText.width + padX * 2;
-    const h = this.titleText.height + padY * 2;
-    g.roundRect(-w / 2, -h / 2, w, h, this.opts.hexSize * 0.25)
-      .fill({ color: 0x1c160c, alpha: 0.92 })
-      .stroke({ color: 0xf5d166, width: Math.max(1, this.opts.hexSize * 0.06), alpha: 0.85 });
-  }
-
   private drawBadge(item: Item): void {
     const g = item.badgeGfx;
     g.clear();
@@ -381,16 +348,6 @@ function makeCrispText(
   t.anchor.set(anchor.ax ?? 0.5, anchor.ay ?? 0.5);
   t.scale.set(1 / TEXT_SUPERSAMPLE);
   return t;
-}
-
-function titleStyle(hexSize: number): TextStyleOptions {
-  return {
-    fontFamily: 'system-ui, sans-serif',
-    fontSize: Math.max(5, hexSize * 0.45) * TEXT_SUPERSAMPLE,
-    fontWeight: '600',
-    fill: 0xfff2cf,
-    align: 'center',
-  };
 }
 
 function itemGlyphStyle(hexSize: number): TextStyleOptions {
