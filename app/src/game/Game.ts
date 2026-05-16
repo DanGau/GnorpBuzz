@@ -258,7 +258,12 @@ export class Game {
   }
 
   assignCell(q: number, r: number, role: CellRole): ActionResult {
-    return this.commit(assignCell(this.state, q, r, role));
+    const result = this.commit(assignCell(this.state, q, r, role));
+    // Assigning a role finishes the cell's interaction; drop back to the
+    // whole-hive selection so the radial menu's dim overlay closes (a
+    // filled cell has no further options) while the camera stays zoomed in.
+    if (result.ok) this.select('hive');
+    return result;
   }
 
   buyUpgrade(id: UpgradeId): ActionResult {

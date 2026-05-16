@@ -54,7 +54,7 @@ export class WorldRenderer {
     this.root.eventMode = 'static';
     this.worldView = new WorldView();
     this.flowerView = new FlowerView();
-    this.hiveView = new HiveView(callbacks.onCellClick, callbacks.onHiveClick);
+    this.hiveView = new HiveView(callbacks.onCellClick, callbacks.onHiveClick, callbacks.onBuyCell);
     this.beeView = new BeeView();
     this.digSiteView = new DigSiteView(callbacks.onDigSiteClick);
     this.particleView = new ParticleView();

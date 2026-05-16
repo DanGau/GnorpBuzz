@@ -1,7 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { World } from '../world/World';
 import type { GameState, HiveCell } from '../sim/state';
-import { buyableCells, cellSynergy, hexDistance, TUNING } from '../sim/state';
+import { buyableCells, cellCost, cellSynergy, hexDistance, totalPollen, TUNING } from '../sim/state';
 import { WORLD, hexToWorld } from '../world/layout';
 
 // Renders the Hive as a honeycomb of hex cells. Each cell is one of:
@@ -26,6 +26,13 @@ interface CellSprite {
   base: Graphics;
   hit: Graphics;
   glyph: Text | null;
+  // Price label for buyable cells (e.g. "12🌼"). Lazily created.
+  priceLabel: Text | null;
+  // Visual cost cached so we only redraw when the displayed value or
+  // affordability actually changes.
+  shownCost: number;
+  shownAffordable: boolean;
+  hovered: boolean;
 }
 
 // Match the radial menu's worker glyphs so the shop icon and the cell icon
@@ -80,6 +87,7 @@ export class HiveView {
   private selectionGfx: Graphics;
   private onCellClick: (q: number, r: number) => void;
   private onHiveClick: () => void;
+  private onBuyCell: (q: number, r: number) => void;
   private pulse = 0;
   // Backdrop is redrawn only when the comb's outermost ring changes.
   private combRadius = -1;
@@ -87,10 +95,12 @@ export class HiveView {
   constructor(
     onCellClick: (q: number, r: number) => void,
     onHiveClick: () => void,
+    onBuyCell: (q: number, r: number) => void,
   ) {
     this.container = new Container();
     this.onCellClick = onCellClick;
     this.onHiveClick = onHiveClick;
+    this.onBuyCell = onBuyCell;
 
     this.backdrop = new Graphics();
     this.container.addChild(this.backdrop);
@@ -162,6 +172,10 @@ export class HiveView {
           this.container.removeChild(sprite.glyph);
           sprite.glyph.destroy();
         }
+        if (sprite.priceLabel) {
+          this.container.removeChild(sprite.priceLabel);
+          sprite.priceLabel.destroy();
+        }
         this.sprites.delete(key);
       }
     }
@@ -181,9 +195,23 @@ export class HiveView {
         hit.cursor = 'pointer';
         const q = want.q;
         const r = want.r;
+        const spriteRef: { current: CellSprite | null } = { current: null };
         hit.on('pointertap', (e) => {
           e.stopPropagation();
-          this.onCellClick(q, r);
+          // Buyable cells purchase on a single click — no detour through
+          // the radial menu. Everything else still routes through the
+          // normal cell selection.
+          if (spriteRef.current?.kind === 'buyable') {
+            this.onBuyCell(q, r);
+          } else {
+            this.onCellClick(q, r);
+          }
+        });
+        hit.on('pointerover', () => {
+          if (spriteRef.current) spriteRef.current.hovered = true;
+        });
+        hit.on('pointerout', () => {
+          if (spriteRef.current) spriteRef.current.hovered = false;
         });
         hit.poly(hexPoints(HEX)).fill({ color: 0xffffff, alpha: 0.001 });
         sprite = {
@@ -195,7 +223,12 @@ export class HiveView {
           base,
           hit,
           glyph: null,
+          priceLabel: null,
+          shownCost: -1,
+          shownAffordable: false,
+          hovered: false,
         };
+        spriteRef.current = sprite;
         this.sprites.set(key, sprite);
       }
 
@@ -213,6 +246,25 @@ export class HiveView {
         sprite.kind = want.kind;
         sprite.synergy = synergy;
         this.drawCell(sprite);
+      }
+
+      // Buyable cells get an always-visible price label (when zoomed in),
+      // tinted by affordability and re-rendered when the displayed value
+      // changes. Hover brightens the cell; that's handled in drawCell on
+      // every frame for buyables (the breath animation already redraws).
+      if (sprite.kind === 'buyable') {
+        const cost = cellCost(sprite.q, sprite.r);
+        const affordable = totalPollen(state) >= cost;
+        if (sprite.shownCost !== cost || sprite.shownAffordable !== affordable) {
+          sprite.shownCost = cost;
+          sprite.shownAffordable = affordable;
+          this.ensurePriceLabel(sprite, cost, affordable);
+        }
+        if (sprite.priceLabel) sprite.priceLabel.visible = cellsInteractive;
+        // Buyables are animated (pulse + hover), so redraw each frame.
+        this.drawCell(sprite);
+      } else if (sprite.priceLabel) {
+        this.removePriceLabel(sprite);
       }
     }
 
@@ -308,14 +360,25 @@ export class HiveView {
     }
 
     if (sprite.kind === 'buyable') {
-      // Faint outline + a pulsing "+" to invite expansion.
+      // Faint outline + a pulsing "+" to invite expansion. Hover brightens
+      // the whole cell so the player sees the click target clearly; an
+      // unaffordable buyable still pulses but dimmer and in a cooler tint.
+      const affordable = sprite.shownAffordable;
       const breath = 0.45 + Math.sin(this.pulse * 3) * 0.18;
-      g.poly(outer).fill({ color: 0xf0e9d2, alpha: 0.05 });
-      g.poly(outer).stroke({ color: 0xf5d166, width: HEX * 0.058, alpha: breath });
+      const hoverBoost = sprite.hovered ? 0.35 : 0;
+      const tint = affordable ? 0xf5d166 : 0x6e5a32;
+      const fillAlpha = sprite.hovered ? 0.18 : 0.05;
+      g.poly(outer).fill({ color: 0xf0e9d2, alpha: fillAlpha });
+      g.poly(outer).stroke({
+        color: tint,
+        width: HEX * (sprite.hovered ? 0.085 : 0.058),
+        alpha: Math.min(1, breath + hoverBoost),
+      });
+      const plusAlpha = Math.min(1, breath + 0.2 + hoverBoost);
       g.rect(-HEX * 0.192, -HEX * 0.054, HEX * 0.385, HEX * 0.108)
-        .fill({ color: 0xf5d166, alpha: breath + 0.2 });
+        .fill({ color: tint, alpha: plusAlpha });
       g.rect(-HEX * 0.054, -HEX * 0.192, HEX * 0.108, HEX * 0.385)
-        .fill({ color: 0xf5d166, alpha: breath + 0.2 });
+        .fill({ color: tint, alpha: plusAlpha });
       return;
     }
 
@@ -368,6 +431,41 @@ export class HiveView {
     } else if (sprite.glyph.text !== glyphChar) {
       sprite.glyph.text = glyphChar;
     }
+  }
+
+  // Price label for a buyable cell — supersampled like the role glyph so
+  // it stays crisp at zoom. Sits just below the pulsing "+".
+  private ensurePriceLabel(sprite: CellSprite, cost: number, affordable: boolean): void {
+    const text = cost === 0 ? 'FREE' : `${cost}🌼`;
+    const fill = affordable ? 0xfff2cf : 0x8a7a4a;
+    if (!sprite.priceLabel) {
+      const t = new Text({
+        text,
+        style: {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: HEX * 0.32 * GLYPH_SUPERSAMPLE,
+          fontWeight: '700',
+          fill,
+          align: 'center',
+        },
+      });
+      t.anchor.set(0.5);
+      t.scale.set(1 / GLYPH_SUPERSAMPLE);
+      t.x = sprite.base.x;
+      t.y = sprite.base.y + HEX * 0.5;
+      this.container.addChild(t);
+      sprite.priceLabel = t;
+    } else {
+      sprite.priceLabel.text = text;
+      sprite.priceLabel.style.fill = fill;
+    }
+  }
+
+  private removePriceLabel(sprite: CellSprite): void {
+    if (!sprite.priceLabel) return;
+    this.container.removeChild(sprite.priceLabel);
+    sprite.priceLabel.destroy();
+    sprite.priceLabel = null;
   }
 
   private removeGlyphIfAny(sprite: CellSprite): void {
