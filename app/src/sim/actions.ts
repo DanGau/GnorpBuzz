@@ -11,6 +11,8 @@ import {
   isUpgradeUnlocked,
   nextUpgradeCost,
   artifactForTier,
+  chamberSpec,
+  isChamberBuilt,
   TUNING,
 } from './state';
 
@@ -117,6 +119,22 @@ export function buyUpgrade(state: GameState, id: UpgradeId): ActionResult {
   }
   spendPollen(state, cost);
   state.upgrades[id] = getUpgradeTier(state, id) + 1;
+  return { ok: true };
+}
+
+// Excavate a chamber — spends the dig cost, flips the chamber to built.
+// Building a chamber is the unlock gate for every upgrade it owns.
+export function digChamber(state: GameState, id: string): ActionResult {
+  const spec = chamberSpec(id);
+  if (!spec) return { ok: false, reason: `Unknown chamber ${id}` };
+  if (isChamberBuilt(state, id)) {
+    return { ok: false, reason: 'Chamber already built' };
+  }
+  if (totalPollen(state) < spec.digCost) {
+    return { ok: false, reason: `Need ${spec.digCost} pollen` };
+  }
+  spendPollen(state, spec.digCost);
+  state.chambers[id] = { built: true };
   return { ok: true };
 }
 

@@ -1,5 +1,5 @@
 import { Application, Container } from 'pixi.js';
-import type { GameState } from '../sim/state';
+import type { GameState, UpgradeId } from '../sim/state';
 import { hexDistance, TUNING } from '../sim/state';
 import type { World } from '../world/World';
 import { WORLD } from '../world/layout';
@@ -10,6 +10,8 @@ import { BeeView } from './BeeView';
 import { DigSiteView } from './DigSiteView';
 import { ParticleView } from './ParticleView';
 import { CellRadialView } from './CellRadialView';
+import { UndergroundView } from './UndergroundView';
+import { ChamberRadialView } from './ChamberRadialView';
 
 export interface WorldRendererCallbacks {
   onHiveClick: () => void;
@@ -18,6 +20,9 @@ export interface WorldRendererCallbacks {
   onBackgroundClick: () => void;
   onBuyCell: (q: number, r: number) => void;
   onAssignCell: (q: number, r: number, role: import('../sim/state').CellRole) => void;
+  onChamberClick: (id: string) => void;
+  onDigChamber: (id: string) => void;
+  onBuyUpgrade: (id: UpgradeId) => void;
 }
 
 interface Framing {
@@ -25,6 +30,15 @@ interface Framing {
   x: number;
   y: number;
 }
+
+// Fraction of viewport height the hive occupies when zoomed in. The
+// chambers below get the rest. Designed so the hive dominates the
+// zoomed-in view. The chambers' world-unit footprint (see UNDERGROUND in
+// layout.ts) is tuned to comfortably fit in the remaining viewport.
+const HIVE_VIEWPORT_FRACTION = 0.78;
+// Where the hive's CENTER sits, as a fraction of viewport height from the
+// top. >0.5 pushes everything down on screen (more sky above the hive).
+const HIVE_CENTER_FRAC_FROM_TOP = 0.45;
 
 export type CameraTarget = 'overview' | 'hive';
 
@@ -37,6 +51,8 @@ export class WorldRenderer {
   private digSiteView: DigSiteView;
   private particleView: ParticleView;
   private cellRadialView: CellRadialView;
+  private undergroundView: UndergroundView;
+  private chamberRadialView: ChamberRadialView;
   private fitListeners: (() => void)[] = [];
 
   private app!: Application;
@@ -62,14 +78,26 @@ export class WorldRenderer {
       onBuyCell: callbacks.onBuyCell,
       onAssignCell: callbacks.onAssignCell,
     });
+    this.undergroundView = new UndergroundView({
+      onChamberClick: callbacks.onChamberClick,
+      onDigChamber: callbacks.onDigChamber,
+    });
+    this.chamberRadialView = new ChamberRadialView({
+      onDigChamber: callbacks.onDigChamber,
+      onBuyUpgrade: callbacks.onBuyUpgrade,
+    });
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
     this.root.addChild(this.digSiteView.container);
+    // Underground sits BEHIND the hive so the hive shell visually overlaps
+    // the soil layer at the meadow line.
+    this.root.addChild(this.undergroundView.container);
     this.root.addChild(this.hiveView.container);
     this.root.addChild(this.beeView.container);
     this.root.addChild(this.particleView.container);
     this.root.addChild(this.cellRadialView.container);
+    this.root.addChild(this.chamberRadialView.container);
 
     this.worldView.container.eventMode = 'static';
     this.worldView.container.on('pointertap', () => callbacks.onBackgroundClick());
@@ -98,7 +126,7 @@ export class WorldRenderer {
   private onResize(): void {
     const goal =
       this.cameraTarget === 'hive'
-        ? this.frameHive(this.hiveFocusRadius)
+        ? this.frameHive(this.hiveFocusRadius, false)
         : this.frameOverview();
     this.snapTo(goal);
     for (const cb of this.fitListeners) cb();
@@ -116,22 +144,54 @@ export class WorldRenderer {
     };
   }
 
-  // Fit a square region of `2 * focusRadius` world units centered on the
-  // hive. The comb is biased toward the left so the docked colony panel
-  // (top-right) doesn't sit over it.
-  private frameHive(focusRadius: number): Framing {
+  // Hive-centric framing. Scale is set so the hive comb plus the
+  // underground chamber row both fit at a comfortable size with the hive
+  // dominating (~60% of vertical viewport). When a chamber is focused,
+  // the camera PANS down (same scale) to bring the chamber + its drop-
+  // down panel into frame — hive partially scrolls off the top.
+  //
+  // Horizontal centering is clamped to the world bounds so the empty
+  // space outside the world (x < 0 or x > WORLD.WIDTH) never shows.
+  private frameHive(focusRadius: number, focusChamber: boolean): Framing {
     const w = this.app.renderer.width;
     const h = this.app.renderer.height;
-    const box = 2 * focusRadius;
-    const s = Math.min((w * 0.72) / box, (h * 0.84) / box);
+    const hiveHeight = 2 * focusRadius;
+    // Scale is set so the HIVE fills HIVE_VIEWPORT_FRACTION of viewport
+    // height. Chambers below get the remainder. The width budget is
+    // generous so the hive's vertical extent is the binding constraint.
+    const s = Math.min(
+      (w * 0.96) / hiveHeight,
+      (h * HIVE_VIEWPORT_FRACTION) / hiveHeight,
+    );
+    // Anchor the hive so its center lands at HIVE_CENTER_FRAC_FROM_TOP
+    // of the viewport. Larger values push everything lower on screen.
+    let cy = WORLD.HIVE.y + (h * 0.5 - h * HIVE_CENTER_FRAC_FROM_TOP) / s;
+    // When focused on a chamber, shift the camera down so the chamber +
+    // its drop-down upgrade panel come into view. The hive partially
+    // scrolls off the top — desired, since the player's attention is on
+    // the chamber.
+    if (focusChamber) cy += 95;
+    // Clamp camera center so the visible region stays inside the world
+    // (no black bars from showing past the world's edges in either axis).
+    const halfWorldVisible = w / (2 * s);
+    const minCx = halfWorldVisible;
+    const maxCx = WORLD.WIDTH - halfWorldVisible;
+    const cx =
+      minCx > maxCx
+        ? WORLD.WIDTH * 0.5
+        : Math.min(maxCx, Math.max(minCx, WORLD.HIVE.x));
+    const halfVerticalVisible = h / (2 * s);
+    const minCy = halfVerticalVisible;
+    const maxCy = WORLD.HEIGHT - halfVerticalVisible;
+    if (maxCy >= minCy) cy = Math.min(maxCy, Math.max(minCy, cy));
     return {
       scale: s,
-      x: w * 0.4 - WORLD.HIVE.x * s,
-      y: h * 0.5 - WORLD.HIVE.y * s,
+      x: w * 0.5 - cx * s,
+      y: h * 0.5 - cy * s,
     };
   }
 
-  private hiveFramingFor(state: GameState): Framing {
+  private hiveFramingFor(state: GameState, focusChamber: boolean): Framing {
     let maxRing = 1;
     for (const c of state.hive.cells) {
       maxRing = Math.max(maxRing, hexDistance(c.q, c.r));
@@ -139,7 +199,7 @@ export class WorldRenderer {
     const shellRing = Math.min(maxRing + 1, TUNING.MAX_COMB_RADIUS);
     const shell = WORLD.HEX_SIZE * (Math.sqrt(3) * shellRing + 1.9);
     this.hiveFocusRadius = shell + WORLD.HEX_SIZE * 3;
-    return this.frameHive(this.hiveFocusRadius);
+    return this.frameHive(this.hiveFocusRadius, focusChamber);
   }
 
   worldToScreen(worldX: number, worldY: number, _app: Application): { x: number; y: number } {
@@ -164,15 +224,19 @@ export class WorldRenderer {
     dtMs: number,
     selectedId: string | null,
     selectedCell: { q: number; r: number } | null,
+    selectedChamber: string | null,
   ): void {
-    // Selection drives the camera: the hive (whole or a specific cell)
-    // pulls us into the zoomed-in `hive` framing; anything else is the
-    // wide `overview`.
-    this.cameraTarget =
-      selectedCell !== null || selectedId === 'hive' ? 'hive' : 'overview';
+    // Selection drives the camera: anything that focuses on the hive (a
+    // selected cell, the whole hive, or any chamber underground) pulls us
+    // into the zoomed-in framing; anything else is the wide overview.
+    const zoomedIn =
+      selectedCell !== null ||
+      selectedId === 'hive' ||
+      selectedChamber !== null;
+    this.cameraTarget = zoomedIn ? 'hive' : 'overview';
     const goal =
       this.cameraTarget === 'hive'
-        ? this.hiveFramingFor(state)
+        ? this.hiveFramingFor(state, selectedChamber !== null)
         : this.frameOverview();
 
     // Frame-rate-independent exponential ease toward the goal framing.
@@ -190,5 +254,7 @@ export class WorldRenderer {
     this.digSiteView.update(state, dtMs, selectedId === 'dig-site');
     this.particleView.update(world.particles);
     this.cellRadialView.update(state, selectedCell, dtMs);
+    this.undergroundView.update(state, selectedChamber, cellsInteractive, dtMs);
+    this.chamberRadialView.update(state, selectedChamber, dtMs);
   }
 }

@@ -98,6 +98,72 @@ export const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
 export type HiveType = 'forager' | 'excavator';
 export type CellRole = HiveType;
 
+// ---- Underground chambers ----
+//
+// Tech is physical. Upgrades live inside chambers excavated below the hive.
+// To unlock an upgrade row, the player must first dig the chamber that
+// owns it. Each chamber has a fixed plot in the underground grid and a
+// list of UpgradeIds it gates. See `docs/underground.md` for the design.
+
+export type ChamberId = 'forager-den' | 'excavator-hall';
+
+export interface ChamberSpec {
+  id: ChamberId;
+  name: string;
+  glyph: string;
+  digCost: number;
+  currency: Currency;
+  upgradeIds: UpgradeId[];
+  // Grid coordinate in the underground layout. Row 0 sits just below the
+  // meadow line; deeper rows hold later-phase chambers.
+  plot: { row: number; col: number };
+}
+
+export interface ChamberData {
+  built: boolean;
+}
+
+export const CHAMBERS: ChamberSpec[] = [
+  {
+    id: 'forager-den',
+    name: 'Forager Den',
+    glyph: '🌼',
+    digCost: 20,
+    currency: 'pollen',
+    upgradeIds: [
+      'forager-swift-wings',
+      'forager-quick-forage',
+      'forager-pollen-pouches',
+    ],
+    plot: { row: 0, col: 0 },
+  },
+  {
+    id: 'excavator-hall',
+    name: 'Excavator Hall',
+    glyph: '⛏',
+    digCost: 30,
+    currency: 'pollen',
+    upgradeIds: [
+      'excavator-sharp-stinger',
+      'excavator-swift-strike',
+      'excavator-heavy-swarm',
+    ],
+    plot: { row: 0, col: 1 },
+  },
+];
+
+export function chamberSpec(id: string): ChamberSpec | null {
+  return CHAMBERS.find((c) => c.id === id) ?? null;
+}
+
+export function chamberOwningUpgrade(upgradeId: UpgradeId): ChamberSpec | null {
+  return CHAMBERS.find((c) => c.upgradeIds.includes(upgradeId)) ?? null;
+}
+
+export function isChamberBuilt(state: GameState, id: string): boolean {
+  return state.chambers[id]?.built === true;
+}
+
 // ---- Hive: a honeycomb of hex cells ----
 //
 // Cells use axial hex coordinates (q, r). A cell present in `hive.cells` is
@@ -257,6 +323,9 @@ export interface GameState {
   };
   journal: { entries: JournalEntry[]; pending: boolean; dismissedCount: number };
   upgrades: Partial<Record<UpgradeId, number>>;
+  // Each excavated chamber records as { built: true }. A missing entry means
+  // the chamber is still an unexcavated plot.
+  chambers: Record<string, ChamberData>;
   ascent: AscentData;
 }
 
@@ -342,6 +411,7 @@ export function createInitialState(): GameState {
     artifacts: { revealed: [], pending: null },
     journal: { entries: [], pending: false, dismissedCount: 0 },
     upgrades: {},
+    chambers: {},
     ascent: { phase: 'none', timer: 0 },
   };
 }
@@ -352,11 +422,16 @@ export function getUpgradeTier(state: GameState, id: UpgradeId): number {
   return state.upgrades[id] ?? 0;
 }
 
+// Unlock gate: an upgrade is purchasable iff the chamber that owns it is
+// built. Journal entries no longer gate upgrade rows directly (they still
+// drive narrative + dig-site progression).
 export function isUpgradeUnlocked(state: GameState, id: UpgradeId): boolean {
   const def = UPGRADE_DEFS[id];
   const currentTier = getUpgradeTier(state, id);
   if (currentTier >= def.maxTier) return false;
-  return state.journal.dismissedCount >= currentTier + 1;
+  const chamber = chamberOwningUpgrade(id);
+  if (!chamber) return true;
+  return isChamberBuilt(state, chamber.id);
 }
 
 export function nextUpgradeCost(state: GameState, id: UpgradeId): number {

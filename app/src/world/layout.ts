@@ -3,7 +3,11 @@
 
 export const WORLD = {
   WIDTH: 1280,
-  HEIGHT: 720,
+  // Bumped to make room for an underground cross-section below the meadow
+  // line — see `docs/underground.md`. The overview camera still fits the
+  // whole world; the zoomed-in camera frames hive + underground together.
+  // 1000 leaves soil room below the chamber upgrade panel.
+  HEIGHT: 1000,
 
   // Vertical bands (meadow at bottom, sky middle, stars top).
   MEADOW_Y: 540,
@@ -57,5 +61,34 @@ export function hexToWorld(q: number, r: number): { x: number; y: number } {
   return {
     x: WORLD.HIVE.x + s * Math.sqrt(3) * (q + r / 2),
     y: WORLD.HIVE.y + s * 1.5 * r,
+  };
+}
+
+// ---- Underground layout ----
+//
+// A cross-section "soil" layer below the meadow that hosts the chambers.
+// Plots are arranged in horizontal rows; deeper rows host later-phase
+// chambers. The center column aligns horizontally with the hive so the
+// cross-section reads as "underneath the hill".
+export const UNDERGROUND = {
+  TOP_Y: 615,       // top edge of the soil layer (tucked close to the hive)
+  ROW_HEIGHT: 50,   // vertical spacing between rows
+  ROW_X_CENTER: WORLD.HIVE.x,
+  COL_SPACING: 110,
+  CHAMBER_W: 90,
+  CHAMBER_H: 35,    // small footprint so the hive clearly dominates the view
+} as const;
+
+// Plot (row, col) → world position of the chamber's center.
+// Columns are arranged symmetrically around `ROW_X_CENTER`: with two
+// columns, col 0 sits left, col 1 sits right.
+export function chamberWorldPosition(plot: { row: number; col: number }): {
+  x: number;
+  y: number;
+} {
+  const offsetX = (plot.col - 0.5) * UNDERGROUND.COL_SPACING;
+  return {
+    x: UNDERGROUND.ROW_X_CENTER + offsetX,
+    y: UNDERGROUND.TOP_Y + UNDERGROUND.ROW_HEIGHT * (plot.row + 0.5),
   };
 }

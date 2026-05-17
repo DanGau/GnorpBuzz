@@ -1,13 +1,14 @@
 import type { GameState } from './state';
 import { createInitialState } from './state';
 
-// Bumped to v4 — the hex-cell hive rewrite changes the state shape
-// (hives[] → a single hive with cells). Older saves are simply ignored.
-const STORAGE_KEY = 'gnorpbuzz.save.v4';
+// Bumped to v5 — underground chambers replace the ColonyPanel as the home
+// for upgrade tech. Older saves are simply ignored.
+const STORAGE_KEY = 'gnorpbuzz.save.v5';
 const LEGACY_KEYS = [
   'gnorpbuzz.save.v1',
   'gnorpbuzz.save.v2',
   'gnorpbuzz.save.v3',
+  'gnorpbuzz.save.v4',
 ];
 
 export function serialize(state: GameState): string {
@@ -36,6 +37,7 @@ export function deserialize(blob: string): GameState {
   if (!merged.journal)
     merged.journal = { entries: [], pending: false, dismissedCount: 0 };
   if (!merged.upgrades) merged.upgrades = {};
+  if (!merged.chambers) merged.chambers = {};
   if (!merged.ascent) merged.ascent = { phase: 'none', timer: 0 };
 
   return merged;

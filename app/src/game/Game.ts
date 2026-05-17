@@ -18,6 +18,7 @@ import {
   dismissArtifact,
   buyUpgrade,
   damageDigSite,
+  digChamber,
 } from '../sim/actions';
 import type { UpgradeId } from '../sim/state';
 import type { ActionResult } from '../sim/actions';
@@ -54,9 +55,14 @@ export class Game {
   ui?: UI;
 
   // UI selection. `selectedId` covers the dig site ('dig-site' or null);
-  // `selectedCell` is the hex cell the player has open in the cell panel.
+  // `selectedCell` is the hex cell the player has open in the cell panel;
+  // `selectedChamber` is the underground chamber spec id with its radial
+  // open. The three are mutually exclusive in practice — opening one closes
+  // the others — but `selectedId` may be 'hive' while a chamber is open
+  // so the camera stays in the zoomed-in framing.
   selectedId: string | null = null;
   selectedCell: { q: number; r: number } | null = null;
+  selectedChamber: string | null = null;
 
   private paused = false;
   private skipRendering = false;
@@ -76,6 +82,9 @@ export class Game {
       onBackgroundClick: () => this.stepOutSelection(),
       onBuyCell: (q: number, r: number) => this.buyCell(q, r),
       onAssignCell: (q: number, r: number, role: CellRole) => this.assignCell(q, r, role),
+      onChamberClick: (id: string) => this.toggleChamber(id),
+      onDigChamber: (id: string) => this.digChamber(id),
+      onBuyUpgrade: (id: UpgradeId) => this.buyUpgrade(id),
     });
     this.world.reconcile(this.state);
   }
@@ -86,9 +95,15 @@ export class Game {
   }
 
   select(id: string | null): void {
-    if (this.selectedId === id && this.selectedCell === null) return;
+    if (
+      this.selectedId === id &&
+      this.selectedCell === null &&
+      this.selectedChamber === null
+    )
+      return;
     this.selectedId = id;
     this.selectedCell = null;
+    this.selectedChamber = null;
     this.notify();
   }
 
@@ -99,6 +114,7 @@ export class Game {
   selectCell(q: number, r: number): void {
     this.selectedCell = { q, r };
     this.selectedId = null;
+    this.selectedChamber = null;
     this.notify();
   }
 
@@ -112,19 +128,44 @@ export class Game {
     }
   }
 
+  selectChamber(id: string | null): void {
+    if (this.selectedChamber === id && id !== null) return;
+    this.selectedChamber = id;
+    // Keep the camera in zoomed-in framing while a chamber is open.
+    this.selectedCell = null;
+    this.selectedId = id ? 'hive' : this.selectedId;
+    this.notify();
+  }
+
+  toggleChamber(id: string): void {
+    if (this.selectedChamber === id) {
+      // Closing a chamber's radial falls back to whole-hive — same rule as
+      // closing a cell's radial. Camera stays zoomed in.
+      this.select('hive');
+    } else {
+      this.selectChamber(id);
+    }
+  }
+
   clearSelection(): void {
-    if (this.selectedId === null && this.selectedCell === null) return;
+    if (
+      this.selectedId === null &&
+      this.selectedCell === null &&
+      this.selectedChamber === null
+    )
+      return;
     this.selectedId = null;
     this.selectedCell = null;
+    this.selectedChamber = null;
     this.notify();
   }
 
   // Step out one selection layer: a click outside the radial menu closes it
-  // (cell → hive), but a second click is needed to leave the zoomed-in hive
-  // (hive → overview). Prevents one stray click from rocketing the camera
-  // out from under the player.
+  // (cell/chamber → hive), but a second click is needed to leave the
+  // zoomed-in hive (hive → overview). Prevents one stray click from
+  // rocketing the camera out from under the player.
   stepOutSelection(): void {
-    if (this.selectedCell !== null) {
+    if (this.selectedCell !== null || this.selectedChamber !== null) {
       this.select('hive');
     } else {
       this.clearSelection();
@@ -133,7 +174,11 @@ export class Game {
 
   // True when the camera is (or is heading) zoomed into the hive.
   get isZoomedIn(): boolean {
-    return this.selectedCell !== null || this.selectedId === 'hive';
+    return (
+      this.selectedCell !== null ||
+      this.selectedChamber !== null ||
+      this.selectedId === 'hive'
+    );
   }
 
   async init(mount: HTMLElement): Promise<void> {
@@ -166,7 +211,7 @@ export class Game {
     artifactSystem(this.state);
     ascentSystem(this.state, dtMs);
     this.lastDeltaMs = dtMs;
-    this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell);
+    this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell, this.selectedChamber);
     if (this.ui) this.ui.update();
   }
 
@@ -233,7 +278,7 @@ export class Game {
   render(): void {
     if (this.skipRendering) return;
     this.world.reconcile(this.state);
-    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedId, this.selectedCell);
+    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedId, this.selectedCell, this.selectedChamber);
     this.app.renderer.render(this.app.stage);
   }
 
@@ -270,6 +315,14 @@ export class Game {
     return this.commit(buyUpgrade(this.state, id));
   }
 
+  digChamber(id: string): ActionResult {
+    const result = this.commit(digChamber(this.state, id));
+    // After a successful dig, keep the chamber selected so the radial
+    // refreshes to show the now-available upgrade options.
+    if (result.ok) this.selectChamber(id);
+    return result;
+  }
+
   dismissJournal(): ActionResult {
     return this.commit(dismissArtifact(this.state));
   }
@@ -279,6 +332,7 @@ export class Game {
     this.state = createInitialState();
     this.selectedId = null;
     this.selectedCell = null;
+    this.selectedChamber = null;
     this.world.reconcile(this.state);
     this.notify();
   }
@@ -342,8 +396,12 @@ export class Game {
       worldSnapshot: () => this.world.snapshot(),
       select: (id: string | null) => this.select(id),
       selectCell: (q: number, r: number) => this.selectCell(q, r),
+      selectChamber: (id: string | null) => this.selectChamber(id),
+      digChamber: (id: string) => this.digChamber(id),
       selectedId: () => this.selectedId,
       selectedCell: () => this.selectedCell,
+      selectedChamber: () => this.selectedChamber,
+      chambers: () => ({ ...this.state.chambers }),
     };
     (window as unknown as { debug: typeof dbg }).debug = dbg;
   }
