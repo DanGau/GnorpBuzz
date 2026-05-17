@@ -25,6 +25,9 @@ export interface ChamberUpgradePanelCallbacks {
   // "dig from inside the panel" paths slot in without an API change.
   onDigChamber: (id: string) => void;
   onBuyUpgrade: (id: UpgradeId) => void;
+  // Click outside the panel (on the dim backdrop) closes the panel.
+  // Standard modal-dismiss pattern.
+  onDismissBackdrop: () => void;
 }
 
 const OVERLAY_ALPHA = 0.55;
@@ -78,7 +81,16 @@ export class ChamberRadialView {
     this.overlay
       .rect(-OVERLAY_EXTENT, -OVERLAY_EXTENT, OVERLAY_EXTENT * 2, OVERLAY_EXTENT * 2)
       .fill({ color: 0x000000, alpha: 1 });
-    this.overlay.eventMode = 'none';
+    // Backdrop dismiss: clicks on the dim overlay close the panel. The
+    // panelLayer sits ABOVE the overlay in z-order, so panel-internal
+    // clicks (rows, buttons) are caught by the panel first and don't
+    // bubble to the overlay.
+    this.overlay.eventMode = 'static';
+    this.overlay.cursor = 'default';
+    this.overlay.on('pointertap', (e) => {
+      e.stopPropagation();
+      this.callbacks.onDismissBackdrop();
+    });
     this.overlay.alpha = 0;
     this.overlay.visible = false;
 

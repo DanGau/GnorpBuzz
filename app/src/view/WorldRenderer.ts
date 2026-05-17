@@ -85,6 +85,7 @@ export class WorldRenderer {
     this.chamberRadialView = new ChamberRadialView({
       onDigChamber: callbacks.onDigChamber,
       onBuyUpgrade: callbacks.onBuyUpgrade,
+      onDismissBackdrop: callbacks.onBackgroundClick,
     });
 
     this.root.addChild(this.worldView.container);
