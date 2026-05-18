@@ -1,10 +1,10 @@
 import { Bee } from './Bee';
 import type { CellRole, GameState } from '../sim/state';
-import { excavatorRespawnMs } from '../sim/state';
+import { geomancerRespawnMs } from '../sim/state';
 
 // Positioned representation of a single filled hive cell. Each cell holds
 // exactly one worker's worth of output. Forager cells keep a persistent bee;
-// excavator cells run a one-shot respawn loop (the bee flies out, strikes,
+// geomancer cells run a one-shot respawn loop (the bee flies out, strikes,
 // expires, and a fresh one pops after a cooldown).
 
 export class CellEntity {
@@ -14,7 +14,7 @@ export class CellEntity {
   y: number;
   role: CellRole;
   bees: Bee[];
-  // Excavator-only: ms remaining until the cell respawns its bee.
+  // Geomancer-only: ms remaining until the cell respawns its bee.
   respawnQueue: number[];
 
   constructor(q: number, r: number, x: number, y: number, role: CellRole) {
@@ -25,9 +25,9 @@ export class CellEntity {
     this.role = role;
     this.bees = [];
     this.respawnQueue = [];
-    // Seed the cell's one worker. Excavators come in via the respawn queue
+    // Seed the cell's one worker. Geomancers come in via the respawn queue
     // (cooldown 0 = immediate), foragers spawn directly.
-    if (role === 'excavator') {
+    if (role === 'geomancer') {
       this.respawnQueue.push(0);
     } else {
       this.spawnBee();
@@ -38,16 +38,16 @@ export class CellEntity {
     this.bees.push(new Bee(this.role, this.x, this.y, this.q, this.r));
   }
 
-  // Excavator cells: tick down the respawn timer and reap expired bees.
+  // Geomancer cells: tick down the respawn timer and reap expired bees.
   // Foragers don't expire so this is a no-op for them.
   tickRespawn(dtMs: number, state: GameState): void {
-    if (this.role !== 'excavator') return;
+    if (this.role !== 'geomancer') return;
 
     let i = 0;
     while (i < this.bees.length) {
       if (this.bees[i].state === 'expired') {
         this.bees.splice(i, 1);
-        this.respawnQueue.push(excavatorRespawnMs(state));
+        this.respawnQueue.push(geomancerRespawnMs(state));
       } else {
         i += 1;
       }

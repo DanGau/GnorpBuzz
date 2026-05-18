@@ -1,5 +1,7 @@
 # GnorpBuzz — DPS / Work Model
 
+> **Wizard reframing (current build).** Phase 1 production is *spell damage on the dig site*, not vessel construction. Foragers feed honey/mana into a capped reservoir; Geomancers and Cantors burn mana to cast. The formulas below describe the abstract production model used from Phase 2+; Phase 1 lives in the agent-driven model in `docs/agent-behavior.md`, where mana availability gates the damage rate rather than `base × count × multipliers`. The two views compose: late phases can plug bee counts and upgrade tiers into these formulas, while early phases stay legible as visible bee journeys.
+
 How production actually computes, per phase. Pairs with `docs/phases.md` (which defines the cost curves) and `docs/economy-research.md` (which justifies the design choices).
 
 ## Definitions
@@ -44,21 +46,24 @@ Decoupled from bee DPS — clicks add nectar directly, they don't multiply bee o
 
 ---
 
-## Phase 1 — The Meadow
+## Phase 1 — The Meadow (current build)
 
-**Bee types:** Worker (1 type). Scientist Bee exists as a unique character, no production role.
+**Bee types:** Forager (gatherer), Geomancer (melee earth-spell), Cantor (hover cantrip caster). Scientist Bee exists as a unique character, no production role.
 
 **Outputs:**
 ```
-wax/sec   = base_wax   × workers × (1 + Σ collection_upgrades) × milestone_mult
-pollen/sec = base_pollen × workers × (1 + Σ collection_upgrades) × milestone_mult   [mid-phase onward]
+mana_in/sec  = foragers × pollenPerTrip / roundTripSec   (uncapped, but honey storage caps at honeyCap)
+mana_out/sec = Σ(caster_cast_rate × manaCost) where each caster only fires when honey ≥ manaCost
+
+dmg/sec      = Σ(caster_cast_rate × damagePerCast × synergy)
+                  ≤ effective_mana_in/sec / manaCost   (binding constraint)
 ```
 
-**Construction:** implicit. Resources flow directly into the vessel bar. No Builder pool. Vessel completes when `cumulative_resources ≥ vessel_cost`.
+The mana reservoir is the binding constraint on damage. Surplus pollen accumulates as the upgrade currency.
 
-**Active layer:** none.
+**Active layer:** none yet.
 
-**Player optimization:** *"Buy more Worker Hives vs. buy collection upgrade? When will the new hive actually fill?"*
+**Player optimization:** *"How many Foragers do I need to keep my Geomancer + Cantor mix actually casting? Where do I add cells next — more mana-mules or more damage?"*
 
 ---
 

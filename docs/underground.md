@@ -54,7 +54,7 @@ A chamber is defined by:
 
 | Field | Meaning |
 |-------|---------|
-| `id` | `'forager-den'`, `'excavator-hall'`, … — stable across saves |
+| `id` | `'forager-den'`, `'geomancer-hall'`, `'cantor-cloister'`, … — stable across saves |
 | `name` | Display name (`"Forager Den"`) |
 | `glyph` | Single emoji or character for the chamber sprite and dig-here icon |
 | `plot` | `{ row, col }` — fixed grid coordinate underground |

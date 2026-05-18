@@ -2,84 +2,78 @@
 
 ## Core Concept
 
-An incremental/idle game where a colony of bees attempts to reach a mysterious glowing flower floating in the stars. The player optimizes the colony's DPS (work output) to build increasingly large and absurd flying vessels, each one getting closer to the flower than the last.
+An incremental/idle game where a colony of **wizard bees** chips its way through ancient rocks to recover the absurd "relics" buried beneath them, slowly piecing together the cosmology of their meadow. Each rock cracks open into an artifact (always something mundane — a soda can, a Lego, a cracked iPhone screen) and a Scientist Bee journal entry, which unlocks the next, larger dig site. The player optimizes the colony's mana economy — pollen → honey → spells — to break increasingly tough rock and ultimately follow the Sky Tether upward.
 
 ## Tone & Visual Style
 
-- Cozy, nature-forward, whimsical.
-- 2D with simple bee sprites — always in a "buzzing" animation state.
-- One persistent background: meadow at the bottom, sky in the middle, stars at the top. The sky gradually darkens and becomes more starry as the game progresses — only a few background variants needed, crossfaded between stages.
-- The sky flower is always visible in the upper portion of the screen, glowing softly, acting as a constant visual goal.
-- The flower grows slightly brighter and more detailed as the player gets closer.
+- Cozy, nature-forward, whimsical — with a wink at high fantasy. The bees take their magic *very* seriously.
+- 2D with simple bee sprites — always in a "buzzing" animation state. Spellcaster bees wear tiny pointed hats.
+- One persistent background: meadow at the bottom, sky above, stars at the top. Sky gradually darkens as the player progresses.
+- Below the meadow line, the **underground cross-section** shows the colony's excavated chambers (tech tree) — see `docs/underground.md`.
+
+## The Wizard Reframing
+
+All worker bees are members of a magical caste:
+
+- **Foragers** are the *mundane* caste. They have no spells. They harvest pollen from meadow flowers; the hive refines pollen into **honey** — the colony's mana.
+- **Geomancers** are melee earth-magic specialists. They dive-bomb the rock from above, channeling stored mana into a single thunderous strike.
+- **Cantors** are cantrip-tier hover-casters. They float just above the comb and lob slow magical sparks at the rock from a safe distance — small damage, frequent casts, low mana cost.
+
+Whenever a spellcaster wants to attack, it tries to spend honey. If the reservoir is empty, the caster drifts into an **idle swarm** near the hive for a few seconds, then retries. Mana flow is the central economic pressure: too few foragers and the spellcasters stall; too many and the comb's pollen overflows the cap and just feeds upgrades.
+
+## Resources
+
+| Resource | Source | Used for |
+|----------|--------|----------|
+| **Pollen** | Foragers harvest meadow flowers | Cell unlocks, worker placement, chamber excavation, upgrades |
+| **Honey** (mana) | Refined automatically from deposited pollen, capped at the hive's reservoir | Spell casts (Geomancer, Cantor) |
+
+A forager's deposit credits BOTH pools: pollen increments the upgrade currency, and as long as the honey reservoir has room, the same deposit also tops it up. When the reservoir is full, deposits still build pollen for upgrades — but spellcasters won't gain anything until casts free up room.
+
+> **Note:** the long-term plan is to replace pollen as the upgrade currency with a more thematic "research/insight" resource. Pollen-for-upgrades is a placeholder while we shake out the spell economy.
 
 ## Core Loop
 
-1. Bees automatically collect resources (wax, pollen, nectar) from the meadow.
-2. Resources are fed into the current vessel being constructed at the center of the screen.
-3. When the vessel is complete it launches — the player watches it ascend toward the flower.
-4. It fails to reach the flower and crashes back down.
-5. The Scientist Bee (visually distinct with goggles and a satchel) writes a journal entry describing what she observed.
-6. The journal entry unlocks a new upgrade category.
-7. A new, larger vessel blueprint appears and construction begins again.
+1. Player buys a Forager — it starts gathering pollen from flowers.
+2. Player buys a Geomancer (or Cantor) — it begins casting spells at the current rock, burning honey to deal damage.
+3. As honey runs dry, spellcasters drop into an idle swarm until foragers refill the reservoir.
+4. The rock breaks open → an artifact is revealed → Scientist Bee writes a journal entry.
+5. Player dismisses the artifact → the next rock (more HP) takes its place.
+6. Player buys more workers, expands the comb (new hex cells), digs new underground chambers to unlock upgrade rows.
+7. Cycle repeats across 7 tiers of progressively absurd "relics."
 
 ## The Scientist Bee & Journal System
 
-One visually distinct bee rides every rocket as observer. After each crash she writes a short field note — these are the primary storytelling vehicle.
+One visually distinct bee witnesses every reveal and writes a short field note. Her tone evolves from practical curiosity (early relics) to philosophical wonder (later ones). Each entry both delivers a narrative beat AND, by being dismissed, advances the dig-site tier. The journal IS the cosmology — no separate lore screen.
 
-Each journal entry does two things:
+## Spellcaster Roles in Detail
 
-- Delivers a narrative beat.
-- Unlocks a new upgrade tier.
+### Geomancer
 
-**The journal IS the tech tree** — no separate upgrade screen needed.
+- Big dramatic dive-bomb onto the rock. One strike per spawn; the bee "expires" after each cast and the cell respawns a fresh one on a cooldown.
+- **Mana cost: 2 honey.** High cost = each strike feels deliberate.
+- **Damage:** the bulk of moment-to-moment progress on the rock.
+- **Upgrade paths (Geomancer Hall chamber):** Sharpened Stinger (+damage), Hasty Recruits (−respawn time), Heavy Swarm (+flight speed).
 
-Her tone evolves: early entries are practical and panicked, mid entries become wonder-struck, late entries are philosophical.
+### Cantor
 
-### Rough journal arc
+- Hovers above its home cell. Doesn't fly to the rock — fires a slow magical spark across the meadow at it.
+- **Mana cost: 1 honey.** Cheap and frequent.
+- **Damage:** ~⅓ of a Geomancer strike, but with much faster cadence.
+- **Upgrade paths (Cantor Cloister chamber):** Quicker Cantrip (−cast interval), Twin Spark (+damage), Mana Sip (every Nth cast refunds 1 honey).
 
-- "It's higher than it looks. We need more lift." → unlocks lift upgrades.
-- "Terribly cold and wet. The wax melted." → unlocks heat resistance.
-- "No flowers up here. Just stars. But I saw it — it's real." → emotional beat, unlocks navigation.
-- "Can't breathe. Need a sealed cabin." → unlocks pressurization.
-- "Silent. Beautiful. The flower is enormous up close. We just can't reach it yet." → unlocks late-game tier.
-- Final launch — the flower is reached.
+The two casters have different rhythm and risk shapes: Geomancers are big chunky bursts; Cantors are a constant background patter. A mature colony usually wants both.
 
-## Vessel Progression
+## Hive expansion & layout
 
-Always the same category: flying vessels. Each one is bigger and more absurd than the last:
-
-1. Paper airplane (folded from flower petals)
-2. Hot air balloon (woven vines, honey-gas)
-3. Propeller plane (wood and beeswax)
-4. Jet
-5. Rocket
-6. Bigger rocket
-7. Absurd mega-rocket
-
-Each vessel is visibly larger on screen than the previous one. The launch, ascent, and crash are a key satisfying visual moment — the vessel gets measurably closer to the flower each time before falling.
+The comb is a hex grid the player grows outward one cell at a time. Cells are assigned permanently to a role on placement. **Same-role neighbors** grant adjacency synergy bonuses (Forager speed, Geomancer damage, Cantor — see `docs/dps-model.md`). Layout matters.
 
 ## Upgrade System
 
-Organized around what the Scientist Bee observed on the previous launch. Categories unlock sequentially:
-
-- **Collector upgrades** — more bees, faster collection, new resource types.
-- **Construction upgrades** — build speed, material efficiency.
-- **Vessel upgrades** — lift, heat resistance, navigation, pressurization, fuel, orbital mechanics.
-
-Each upgrade tier is gated behind the previous launch's journal entry.
-
-## Milestone Structure
-
-The "break the wall" moment is the launch itself:
-
-- Complete vessel → launch → dramatic ascent → crash → journal entry → new upgrade tier unlocks → new larger vessel appears.
-- This cycle is the primary player reward loop.
-- Each cycle should feel meaningfully different from the last due to new upgrade categories opening up.
+Upgrades live inside underground chambers (`docs/underground.md`). To unlock a row, dig the chamber that contains it. Chambers cost pollen; their dig cost gates how fast the player can specialize.
 
 ## Win State
 
-The final phase isn't a visit — it's a **colonization**. Once the colony confirms the flower is real and reachable but not safely traversable in a single trip, the goal pivots from "reach it" to "live there." The final mega-vessel carries habitats. Bees harvest **Bloomshard** (crystallized flower-essence) from approach distance to build sustainable structures at the destination.
+After the seventh and final rock breaks open, the colony finds **the Sky Tether** — a child's half-deflated mylar balloon, still straining upward. The bees tie themselves to it. The flower of the original lore is finally within reach. Ascent begins.
 
-The Scientist Bee's final journal entry is the emotional payoff of the whole game — not "we made it" but **"we're staying."** The flower was always real, always waiting, and now it's home.
-
-See `docs/phases.md` for the four-phase breakdown that delivers this arc.
+The Scientist Bee's final journal entry is the emotional payoff: not "we made it," but "we're going up."

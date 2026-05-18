@@ -1,8 +1,8 @@
 import { Application, Container } from 'pixi.js';
 import type { GameState, UpgradeId } from '../sim/state';
-import { hexDistance, TUNING } from '../sim/state';
+import { CHAMBERS, hexDistance, TUNING } from '../sim/state';
 import type { World } from '../world/World';
-import { WORLD } from '../world/layout';
+import { UNDERGROUND, WORLD } from '../world/layout';
 import { WorldView } from './WorldView';
 import { FlowerView } from './FlowerView';
 import { HiveView } from './HiveView';
@@ -12,6 +12,7 @@ import { ParticleView } from './ParticleView';
 import { CellRadialView } from './CellRadialView';
 import { UndergroundView } from './UndergroundView';
 import { ChamberRadialView } from './ChamberRadialView';
+import { HoneyBarView } from './HoneyBarView';
 
 export interface WorldRendererCallbacks {
   onHiveClick: () => void;
@@ -31,14 +32,22 @@ interface Framing {
   y: number;
 }
 
-// Fraction of viewport height the hive occupies when zoomed in. The
-// chambers below get the rest. Designed so the hive dominates the
-// zoomed-in view. The chambers' world-unit footprint (see UNDERGROUND in
-// layout.ts) is tuned to comfortably fit in the remaining viewport.
-const HIVE_VIEWPORT_FRACTION = 0.78;
-// Where the hive's CENTER sits, as a fraction of viewport height from the
-// top. >0.5 pushes everything down on screen (more sky above the hive).
-const HIVE_CENTER_FRAC_FROM_TOP = 0.45;
+// World-space Y of the bottom edge of the deepest chamber row. Used by
+// the hive camera framing so even the smallest hive always pulls the
+// underground band fully into view.
+function deepestChamberBottom(): number {
+  let maxRow = 0;
+  for (const spec of CHAMBERS) {
+    if (spec.plot.row > maxRow) maxRow = spec.plot.row;
+  }
+  // Each row's chamber center sits at TOP_Y + ROW_HEIGHT * (row + 0.5);
+  // the bottom edge is half a CHAMBER_H further down.
+  return (
+    UNDERGROUND.TOP_Y +
+    UNDERGROUND.ROW_HEIGHT * (maxRow + 0.5) +
+    UNDERGROUND.CHAMBER_H / 2
+  );
+}
 
 export type CameraTarget = 'overview' | 'hive';
 
@@ -53,6 +62,7 @@ export class WorldRenderer {
   private cellRadialView: CellRadialView;
   private undergroundView: UndergroundView;
   private chamberRadialView: ChamberRadialView;
+  private honeyBarView: HoneyBarView;
   private fitListeners: (() => void)[] = [];
 
   private app!: Application;
@@ -87,6 +97,7 @@ export class WorldRenderer {
       onBuyUpgrade: callbacks.onBuyUpgrade,
       onDismissBackdrop: callbacks.onBackgroundClick,
     });
+    this.honeyBarView = new HoneyBarView();
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
@@ -95,6 +106,10 @@ export class WorldRenderer {
     // the soil layer at the meadow line.
     this.root.addChild(this.undergroundView.container);
     this.root.addChild(this.hiveView.container);
+    // Honey jar floats above the hive — drawn after the hive so it sits
+    // in front of the shell, and before particles so mana orbs/sparkles
+    // emitted at the jar render on top of it.
+    this.root.addChild(this.honeyBarView.container);
     this.root.addChild(this.beeView.container);
     this.root.addChild(this.particleView.container);
     this.root.addChild(this.cellRadialView.container);
@@ -104,9 +119,13 @@ export class WorldRenderer {
     this.worldView.container.on('pointertap', () => callbacks.onBackgroundClick());
   }
 
-  attach(app: Application, parent: Container, _world: World): void {
+  attach(app: Application, parent: Container, world: World): void {
     this.app = app;
     parent.addChild(this.root);
+    // Register the honey jar as the World's reaction surface so Bee.ts
+    // (which can only see `World`) can fire produce/consume flashes
+    // through it without the sim layer importing presentation code.
+    world.honeyBar = this.honeyBarView;
     this.snapTo(this.frameOverview());
     app.renderer.on('resize', () => this.onResize());
   }
@@ -133,40 +152,67 @@ export class WorldRenderer {
     for (const cb of this.fitListeners) cb();
   }
 
-  // Fit the whole world into the canvas, centered.
+  // Fit the wide-screen overview rect into the canvas, centered. The rect
+  // (WORLD.OVERVIEW) stops just below the meadow flowers — the underground
+  // band is intentionally cropped out and only appears when the camera
+  // zooms in. The rect is ~16:9 so a typical canvas fills with no letter-
+  // boxing; on narrower canvases the rect contains the width and the extra
+  // sky/meadow above and below is allowed to be cropped or padded by the
+  // standard contain fit.
   private frameOverview(): Framing {
     const w = this.app.renderer.width;
     const h = this.app.renderer.height;
-    const s = Math.min(w / WORLD.WIDTH, h / WORLD.HEIGHT);
+    const ov = WORLD.OVERVIEW;
+    const rectW = ov.RIGHT - ov.LEFT;
+    const rectH = ov.BOTTOM - ov.TOP;
+    const s = Math.min(w / rectW, h / rectH);
+    // Anchor the rect's top-left at the canvas top-left after centering —
+    // multiplying the rect's offsets by `s` keeps world coordinates inside
+    // (`OVERVIEW.LEFT`, `OVERVIEW.TOP`) aligned to the visible viewport.
     return {
       scale: s,
-      x: (w - WORLD.WIDTH * s) / 2,
-      y: (h - WORLD.HEIGHT * s) / 2,
+      x: (w - rectW * s) / 2 - ov.LEFT * s,
+      y: (h - rectH * s) / 2 - ov.TOP * s,
     };
   }
 
-  // Hive-centric framing. Scale is set so the hive comb plus the
-  // underground chamber row both fit at a comfortable size with the hive
-  // dominating (~60% of vertical viewport). When a chamber is focused,
-  // the camera PANS down (same scale) to bring the chamber + its drop-
-  // down panel into frame — hive partially scrolls off the top.
+  // Hive-centric framing. The camera frames a vertical band that always
+  // contains BOTH the full hive shell AND every chamber row underground —
+  // even at the smallest hive (3 starting cells) the deepest chamber stays
+  // in view. The band is computed from the hive's actual shell radius plus
+  // the underground depth derived from `CHAMBERS`.
+  //
+  // When a chamber is focused, the camera PANS down (same scale) so the
+  // chamber + its drop-down upgrade panel sit comfortably in frame.
   //
   // Horizontal centering is clamped to the world bounds so the empty
   // space outside the world (x < 0 or x > WORLD.WIDTH) never shows.
   private frameHive(focusRadius: number, focusChamber: boolean): Framing {
     const w = this.app.renderer.width;
     const h = this.app.renderer.height;
-    const hiveHeight = 2 * focusRadius;
-    // Scale is set so the HIVE fills HIVE_VIEWPORT_FRACTION of viewport
-    // height. Chambers below get the remainder. The width budget is
-    // generous so the hive's vertical extent is the binding constraint.
+
+    // Vertical band the camera must contain: from the top of the hive
+    // shell down through the bottom of the deepest chamber row, with a
+    // small padding so neither edge is flush against the viewport edge.
+    const hiveTop = WORLD.HIVE.y - focusRadius;
+    const undergroundBottom = deepestChamberBottom();
+    const PADDING = 30;
+    const bandTop = hiveTop - PADDING;
+    const bandBottom = undergroundBottom + PADDING;
+    const bandHeight = bandBottom - bandTop;
+    const bandCenterY = (bandTop + bandBottom) / 2;
+
+    // Width budget: keep the hive's horizontal extent comfortable. The
+    // hive shell's flat-top hexagon spans roughly 2 × focusRadius wide,
+    // matching its vertical extent.
+    const hiveWidth = 2 * focusRadius;
+
     const s = Math.min(
-      (w * 0.96) / hiveHeight,
-      (h * HIVE_VIEWPORT_FRACTION) / hiveHeight,
+      (w * 0.96) / hiveWidth,
+      (h * 0.96) / bandHeight,
     );
-    // Anchor the hive so its center lands at HIVE_CENTER_FRAC_FROM_TOP
-    // of the viewport. Larger values push everything lower on screen.
-    let cy = WORLD.HIVE.y + (h * 0.5 - h * HIVE_CENTER_FRAC_FROM_TOP) / s;
+
+    let cy = bandCenterY;
     // When focused on a chamber, shift the camera down so the chamber +
     // its drop-down upgrade panel come into view. The hive partially
     // scrolls off the top — desired, since the player's attention is on
@@ -251,11 +297,31 @@ export class WorldRenderer {
 
     this.flowerView.update(state, world, dtMs);
     this.hiveView.update(state, world, selectedCell, cellsInteractive, dtMs);
+    this.honeyBarView.update(state, dtMs);
     this.beeView.update(world, state.elapsedMs);
     this.digSiteView.update(state, dtMs, selectedId === 'dig-site');
     this.particleView.update(world.particles);
     this.cellRadialView.update(state, selectedCell, dtMs);
     this.undergroundView.update(state, selectedChamber, cellsInteractive, dtMs);
-    this.chamberRadialView.update(state, selectedChamber, dtMs);
+    // Visible world rect in world coordinates, computed from the live
+    // camera transform. Passed to the chamber panel so its hover tooltip
+    // can decide whether to fan right or left based on what's actually
+    // on-screen, not on the abstract world bounds.
+    const viewportWorld = this.visibleWorldRect();
+    this.chamberRadialView.update(state, selectedChamber, dtMs, viewportWorld);
+  }
+
+  // Inverse of the camera transform: returns the world-space rect that
+  // maps onto the canvas viewport right now.
+  private visibleWorldRect(): { left: number; right: number; top: number; bottom: number } {
+    const w = this.app.renderer.width;
+    const h = this.app.renderer.height;
+    const s = this.camScale || 1;
+    return {
+      left: -this.camX / s,
+      right: (w - this.camX) / s,
+      top: -this.camY / s,
+      bottom: (h - this.camY) / s,
+    };
   }
 }

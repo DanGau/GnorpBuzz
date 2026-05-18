@@ -64,7 +64,7 @@ describe('cell actions', () => {
   it('the first worker must be a Forager', () => {
     const s = createInitialState();
     expect(mustPlaceForager(s)).toBe(true);
-    const bad = assignCell(s, 0, 0, 'excavator');
+    const bad = assignCell(s, 0, 0, 'geomancer');
     expect(bad.ok).toBe(false);
     expect(bad.reason).toMatch(/Forager/);
     expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
@@ -77,10 +77,10 @@ describe('cell actions', () => {
     expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
     expect(countRole(s, 'forager')).toBe(1);
     expect(nextWorkerCost(s, 'forager')).toBeGreaterThan(0);
-    // Excavator is still free — cost is per-role, and the first-forager
+    // Geomancer is still free — cost is per-role, and the first-forager
     // requirement is now satisfied.
-    expect(nextWorkerCost(s, 'excavator')).toBe(0);
-    expect(assignCell(s, -1, 1, 'excavator').ok).toBe(true);
+    expect(nextWorkerCost(s, 'geomancer')).toBe(0);
+    expect(assignCell(s, -1, 1, 'geomancer').ok).toBe(true);
   });
 
   it('placing a second worker of a role requires pollen', () => {
@@ -99,7 +99,7 @@ describe('cell actions', () => {
     const s = createInitialState();
     s.hive.pollen = 100;
     assignCell(s, 0, 0, 'forager');
-    const reassign = assignCell(s, 0, 0, 'excavator');
+    const reassign = assignCell(s, 0, 0, 'geomancer');
     expect(reassign.ok).toBe(false);
     expect(reassign.reason).toMatch(/already/);
     expect(cellAt(s.hive, 0, 0)?.role).toBe('forager');
@@ -149,7 +149,7 @@ describe('cell actions', () => {
     expect(cellSynergy(s.hive, -1, 1)).toBe(1);
     expect(cellSynergy(s.hive, 0, 1)).toBe(1);
     // A worker with no same-role neighbor has zero synergy.
-    assignCell(s, 0, 0, 'excavator');
+    assignCell(s, 0, 0, 'geomancer');
     expect(cellSynergy(s.hive, 0, 0)).toBe(0);
   });
 });

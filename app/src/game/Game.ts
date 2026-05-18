@@ -3,6 +3,8 @@ import type { GameState, CellRole } from '../sim/state';
 import {
   createInitialState,
   totalPollen,
+  totalHoney,
+  honeyCap,
   totalBees,
   countRole,
   nextWorkerCost,
@@ -33,16 +35,20 @@ export interface GameSnapshot {
   elapsedMs: number;
   paused: boolean;
   pollen: number;
+  honey: number;
+  honeyCap: number;
   cells: { q: number; r: number; role: string | null }[];
   totalBees: number;
   foragers: number;
-  excavators: number;
+  geomancers: number;
+  cantors: number;
   digSite: { tier: number; hp: number; maxHp: number; state: string; hpPct: number };
   artifacts: { revealed: string[]; pending: string | null };
   journal: { pending: boolean; entries: number };
   ascent: { phase: string; timer: number };
   nextForagerCost: number;
-  nextExcavatorCost: number;
+  nextGeomancerCost: number;
+  nextCantorCost: number;
 }
 
 export class Game {
@@ -244,10 +250,13 @@ export class Game {
       elapsedMs: this.state.elapsedMs,
       paused: this.paused,
       pollen: totalPollen(this.state),
+      honey: totalHoney(this.state),
+      honeyCap: honeyCap(this.state),
       cells: this.state.hive.cells.map((c) => ({ q: c.q, r: c.r, role: c.role })),
       totalBees: totalBees(this.state),
       foragers: countRole(this.state, 'forager'),
-      excavators: countRole(this.state, 'excavator'),
+      geomancers: countRole(this.state, 'geomancer'),
+      cantors: countRole(this.state, 'cantor'),
       digSite: {
         tier: this.state.digSite.tier,
         hp: this.state.digSite.hp,
@@ -265,7 +274,8 @@ export class Game {
       },
       ascent: { phase: this.state.ascent.phase, timer: this.state.ascent.timer },
       nextForagerCost: nextWorkerCost(this.state, 'forager'),
-      nextExcavatorCost: nextWorkerCost(this.state, 'excavator'),
+      nextGeomancerCost: nextWorkerCost(this.state, 'geomancer'),
+      nextCantorCost: nextWorkerCost(this.state, 'cantor'),
     };
   }
 
@@ -353,6 +363,15 @@ export class Game {
       damageDigSite: (amount: number) => this.commit(damageDigSite(this.state, amount)),
       grantPollen: (amount: number) => {
         this.state.hive.pollen += amount;
+        saveToStorage(this.state);
+        this.notify();
+        return { ok: true };
+      },
+      grantHoney: (amount: number) => {
+        this.state.hive.honey = Math.min(
+          this.state.hive.honeyCap,
+          this.state.hive.honey + amount,
+        );
         saveToStorage(this.state);
         this.notify();
         return { ok: true };

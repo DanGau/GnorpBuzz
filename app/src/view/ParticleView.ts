@@ -89,5 +89,35 @@ function drawParticle(g: Graphics, p: Particle, lifeFrac: number): void {
       g.circle(0, 6, 1.6).fill(0xffe680);
       break;
     }
+    case 'spark': {
+      // Cantor cantrip projectile — a small four-pointed magic star with
+      // a soft purple-white halo. Pulses slightly as it travels.
+      const r = p.size * (1.1 + Math.sin(lifeFrac * Math.PI * 4) * 0.18);
+      g.circle(0, 0, r * 1.8).fill({ color: 0xa479ff, alpha: 0.35 });
+      g.poly([0, -r * 1.2, r * 0.35, 0, 0, r * 1.2, -r * 0.35, 0]).fill(0xfff2cf);
+      g.poly([-r * 1.2, 0, 0, -r * 0.35, r * 1.2, 0, 0, r * 0.35]).fill(0xfff2cf);
+      g.circle(0, 0, r * 0.45).fill(0xffffff);
+      break;
+    }
+    case 'manaOrb': {
+      // Mana orb — small honey-gold sphere with a soft halo. Reads as
+      // liquid magic flowing from the hive's reservoir to the caster.
+      const r = p.size;
+      g.circle(0, 0, r * 2.2).fill({ color: 0xf5d166, alpha: 0.35 });
+      g.circle(0, 0, r * 1.3).fill({ color: 0xfff0a0, alpha: 0.85 });
+      g.circle(0, 0, r * 0.6).fill(0xffffff);
+      // Trailing arc — a faint comet tail behind the orb.
+      g.circle(-r * 0.8, r * 0.6, r * 0.5).fill({ color: 0xf5d166, alpha: 0.5 });
+      break;
+    }
+    case 'honeyDrop': {
+      // Tear-shaped honey droplet — pointed top, round bottom. Reads as
+      // a small bead of spilled mana falling away from the jar.
+      const r = p.size;
+      g.circle(0, 0, r * 0.9).fill(0xf5d166);
+      g.poly([0, -r * 2, -r * 0.6, -r * 0.2, r * 0.6, -r * 0.2]).fill(0xf5d166);
+      g.circle(-r * 0.3, -r * 0.3, r * 0.3).fill({ color: 0xfff0a0, alpha: 0.8 });
+      break;
+    }
   }
 }

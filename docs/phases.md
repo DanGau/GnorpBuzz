@@ -1,6 +1,8 @@
 # GnorpBuzz — Four Phases
 
-The full arc of the game in four phases, mapping the 7 vessel tiers onto distinct economic and narrative stages. Each phase has its own resource character; transitions are Paperclips-style — old systems auto-convert into background producers, new resources and mechanics replace the foreground.
+> **Wizard reframing (current build).** The Phase 1 "vessel" framing has been replaced with a **rock-breaking** spell economy: foragers refine pollen into honey/mana, geomancers and cantors burn mana to crack each rock open, and the artifact inside drives the journal arc. The 7-tier progression still applies — each tier is a tougher rock instead of a bigger vessel — and the same Paperclips-style stage transitions are planned downstream. Phase 1 mechanics here are best read alongside `docs/game-design.md` and `docs/agent-behavior.md`.
+
+The full arc of the game in four phases, mapping the 7 tiers onto distinct economic and narrative stages. Each phase has its own resource character; transitions are Paperclips-style — old systems auto-convert into background producers, new resources and mechanics replace the foreground.
 
 **Total arc target:** 10–15 hours from first launch to colonization.
 

@@ -7,7 +7,7 @@ import { WORLD, hexToWorld } from '../world/layout';
 // Renders the Hive as a honeycomb of hex cells. Each cell is one of:
 //   empty    — unlocked, no worker
 //   forager  — holds a forager worker (gold)
-//   excavator— holds an excavator worker (red stone)
+//   geomancer— holds an geomancer worker (red stone)
 //   buyable  — locked frontier cell, can be unlocked
 // The selected cell gets a bright halo. Buyable cells pulse invitingly.
 //
@@ -15,7 +15,7 @@ import { WORLD, hexToWorld } from '../world/layout';
 // whole-hive hit area catches clicks (→ zoom into the hive); when zoomed
 // in, the per-cell hit areas are live so the player can pick cells.
 
-type CellKind = 'empty' | 'forager' | 'excavator' | 'buyable';
+type CellKind = 'empty' | 'forager' | 'geomancer' | 'cantor' | 'buyable';
 
 interface CellSprite {
   key: string;
@@ -37,9 +37,10 @@ interface CellSprite {
 
 // Match the radial menu's worker glyphs so the shop icon and the cell icon
 // read as the same thing.
-const ROLE_GLYPH: Record<'forager' | 'excavator', string> = {
+const ROLE_GLYPH: Record<'forager' | 'geomancer' | 'cantor', string> = {
   forager: '🌼',
-  excavator: '⛏',
+  geomancer: '⛏',
+  cantor: '✦',
 };
 const GLYPH_SUPERSAMPLE = 6;
 
@@ -67,9 +68,10 @@ function hexOutline(size: number, cx: number, cy: number, flatTop: boolean): num
   return pts;
 }
 
-const CELL_COLORS: Record<'forager' | 'excavator', number> = {
+const CELL_COLORS: Record<'forager' | 'geomancer' | 'cantor', number> = {
   forager: 0xe8b04c,
-  excavator: 0xc94a2a,
+  geomancer: 0xc94a2a,
+  cantor: 0x9a7adf,
 };
 
 export class HiveView {
@@ -239,7 +241,7 @@ export class HiveView {
       if (sprite.glyph) sprite.glyph.visible = cellsInteractive;
 
       const synergy =
-        want.kind === 'forager' || want.kind === 'excavator'
+        want.kind === 'forager' || want.kind === 'geomancer' || want.kind === 'cantor'
           ? cellSynergy(state.hive, want.q, want.r)
           : 0;
       if (sprite.kind !== want.kind || sprite.synergy !== synergy) {
@@ -389,7 +391,7 @@ export class HiveView {
       return;
     }
 
-    // Worker cell — forager or excavator. The glyph (flower / pickaxe)
+    // Worker cell — forager or geomancer. The glyph (flower / pickaxe)
     // replaces the old bee dot so the cell icon matches the shop's option.
     const color = CELL_COLORS[sprite.kind];
     g.poly(outer).fill(0x2a2012);
@@ -478,6 +480,7 @@ export class HiveView {
 
 function kindOf(cell: HiveCell): CellKind {
   if (cell.role === 'forager') return 'forager';
-  if (cell.role === 'excavator') return 'excavator';
+  if (cell.role === 'geomancer') return 'geomancer';
+  if (cell.role === 'cantor') return 'cantor';
   return 'empty';
 }

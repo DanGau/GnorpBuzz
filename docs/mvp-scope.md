@@ -1,81 +1,62 @@
-# MVP Scope
+# MVP Scope (Wizard Reframing)
 
-The minimum slice that proves the core loop end-to-end. Everything outside this is parked.
+The minimum slice that exercises the wizard/mana economy end-to-end.
 
-## Scope (revised after first-play feedback)
+## Scope
 
-**Phase 1, agent-driven, deliberate progression.** The MVP runs from new-game through:
+1. Game loads with a small empty comb (3 cells), one dig site (rock) in the meadow, no bees, no honey, no pollen.
+2. Player buys a Forager (free) → it harvests pollen from meadow flowers; deposits credit BOTH pollen (upgrade currency) AND honey (mana reservoir, cap 10).
+3. Player buys a Geomancer or a Cantor (Cantor available once the Forager exists).
+4. The spellcaster checks honey before each cast. If honey ≥ cost → cast (damage the rock). If not → idle-swarm for ~3 sec, retry.
+5. Honey cap clamps the mana reservoir to 10. Surplus deposits still flow into the pollen pool (upgrades).
+6. As the rock takes damage, eventually HP hits 0. An artifact is revealed (`first-relic` — a plastic bottle cap with sacred PEPSI runes).
+7. Player reads the Scientist Bee journal entry, dismisses → next tier rock takes its place.
+8. Player digs underground chambers (Forager Den, Geomancer Hall, Cantor Cloister) to unlock upgrade rows for each role.
 
-1. Game loads into an empty colony — one Forager Hive, one Wax Hive, no bees, vacant vessel pad.
-2. Player buys their first Forager Bee (FREE). It flies out and harvests pollen.
-3. Player buys their first Wax-maker Bee (FREE). It fetches pollen, produces wax, carries blocks to the vessel.
-4. Player buys additional bees with wax to scale the colony (each bee costs more than the last).
-5. After 8 blocks delivered, the airplane assembles and glows.
-6. **Player clicks the airplane** to launch it. Auto-launch is intentionally absent.
-7. Vessel ascends → crashes.
-8. Scientist Bee writes the first journal entry.
-9. End of MVP.
+## In scope
 
-The full agent-behavior model is in `docs/agent-behavior.md`.
+- **Three worker roles:** Forager (gatherer), Geomancer (melee earth-spell), Cantor (cantrip hover-caster).
+- **Honey reservoir** on the hive (cap 10), refined automatically from deposited pollen up to the cap.
+- **Mana-gated casts.** Geomancer 2 honey/strike; Cantor 1 honey/spark. Empty reservoir → idle swarm + retry.
+- **Idle-swarm** state for spellcasters out of mana — bees drift near the comb, telegraphing the stall.
+- **Cantor projectile.** A short purple spark that flies from the hover slot to the rock and dissipates. Damage applies at cast time; the spark is cosmetic.
+- **Per-role upgrade chambers** under the meadow (`docs/underground.md`): Forager Den (3 upgrades), Geomancer Hall (3), Cantor Cloister (3).
+- **Synergy on the comb.** Same-role neighbors grant +speed (Forager) or +damage (Geomancer/Cantor).
+- **Seven artifacts**, each a different absurd "relic."
 
-**Out of scope for MVP:**
+## Out of scope (parked)
 
-- Nectar, Bloomshard.
-- Builder / Scientist / Engineer hive types.
-- Queen upgrades, collection upgrades, hive upgrades — no upgrade tree at all yet.
-- Tier 2+ vessels, conversion ratios, refineries, in-flight performance.
-- Active nectar-flower mini-event.
-- Multiple journal entries; just the first.
-
-**In scope (added in the pivot):**
-
-- Pollen as a visible Phase 1 resource.
-- Single Forager Hive and single Wax Hive (fixed structures); player scales by buying bees.
-- First bee of each type is free; subsequent bees cost wax with exponential growth.
-- Flowers as harvest sites with yield + regrow.
-- Bee state machines (forager and wax-maker, see `docs/agent-behavior.md`).
-- Discrete wax-block delivery to the vessel.
-- Click-to-launch: player must click the assembled airplane to send it.
-
-**Removed from earlier MVP iterations:**
-
-- Queen / auto-spawning. Bees only enter the colony via player purchase.
-- Slot caps on hives. Hives hold as many bees as the player has bought.
-- Buying additional hives. Only one of each type exists.
+- Replacing pollen with a thematic upgrade currency (research/insight) — kept on the roadmap, deliberately deferred so we ship the spell-economy first.
+- Additional spellcaster roles beyond Forager / Geomancer / Cantor.
+- Honey-cap upgrades (could land trivially if we want; we're holding so the cap stays a real constraint during initial tuning).
+- Refinery-style conversions, multiple hives, second Queen.
 
 ## Technical decisions
 
 | Decision | Choice |
 |----------|--------|
-| UI approach | **Hybrid** — Pixi for world (meadow, bees, vessel, sky, flower), HTML/CSS overlay for resource counters, buy buttons, journal modal |
-| Save | **Local storage**, **on-action** (every meaningful state change writes) |
-| Offline progress | **None** for MVP — game ticks only while tab is open |
-| Tuning approach | **Guess values; tune after** the loop is playable |
+| UI approach | **Hybrid** — Pixi for world (meadow, bees, dig site, sparks), HTML/CSS overlay for resource bar (pollen + honey/cap), journal modal, end banner |
+| Save | **Local storage**, on-action. Save version v6 (older saves are dropped — wizard reframing is a breaking shape change). |
+| Offline progress | None |
+| Tuning approach | Guess; tune after first play. All values in `TUNING` (`app/src/sim/state.ts`). |
 
-## First-pass Phase 1 numbers (single-hive, click-to-launch model)
+## First-pass numbers
 
-- **Forager round-trip:** ~10 sec/pollen (varies with flower distance).
-- **Wax-maker round-trip:** ~22–27 sec/block (with hives at x=380 and x=900, vessel at x=640).
-- **Bee base cost:** 2 wax blocks, growth `r = 1.3` (per-type count, first one free).
-- **Flower yield:** 5 harvests per flower, 60 sec regrow timer.
-- **Vessel cost:** 8 wax blocks (Tier 1 paper airplane).
-- **Launch animation:** 4 sec ascent, 2 sec crash.
-
-**No queen, no slots, no auto-spawn.** Bees enter the colony only when the player buys them.
-
-**Time-to-launch is now player-paced.** With minimum bees (1 forager + 1 wax-maker), an 8-block vessel takes ~3–4 minutes. Buying additional bees accelerates throughput but delays the launch budget.
+- Honey cap: 10.
+- Forager round-trip: ~10 sec/pollen.
+- Geomancer mana cost: 2 honey; base damage: 1; respawn: 1.8 sec.
+- Cantor mana cost: 1 honey; base damage: 0.35; cast interval: 2.4 sec.
+- Idle-swarm retry: 2.8 sec.
+- Tier-1 rock: 40 HP.
 
 ## Why this scope
 
-This slice exercises the architecture's load-bearing concerns:
+The wizard reframing introduces the central pacing lever — **mana as the binding constraint on spell output**. This MVP exercises:
 
-- Game loop / tick system.
-- Resource accumulation and spending.
-- Purchasable building (the hive) with exponential cost.
-- Auto-fill / Queen mechanic.
-- Vessel construction bar.
-- Launch / crash sequence (animation + state transition).
-- Journal modal (HTML overlay).
-- Save / load on action.
+- Resource accumulation with a cap (forces spending pressure).
+- Two coexisting currencies (one capped, one uncapped) feeding off the same deposit event.
+- Two distinct spellcaster rhythms (chunky one-shot Geomancer vs. continuous cantrip Cantor).
+- Idle-swarm visual feedback when production stalls.
+- Chamber-gated upgrade unlocking (now three chambers instead of two).
 
-Everything in Phase 2+ is a *repetition* of these patterns with new variables. Get this right and the rest is content.
+Everything outside this slice is content layered on top.

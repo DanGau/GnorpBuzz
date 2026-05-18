@@ -1,14 +1,15 @@
 import type { GameState } from './state';
 import { createInitialState } from './state';
 
-// Bumped to v5 — underground chambers replace the ColonyPanel as the home
-// for upgrade tech. Older saves are simply ignored.
-const STORAGE_KEY = 'gnorpbuzz.save.v5';
+// Bumped to v6 — wizard reframing: honey/mana reservoir on the hive, cantor
+// role, geomancer rename. Older saves are simply ignored.
+const STORAGE_KEY = 'gnorpbuzz.save.v6';
 const LEGACY_KEYS = [
   'gnorpbuzz.save.v1',
   'gnorpbuzz.save.v2',
   'gnorpbuzz.save.v3',
   'gnorpbuzz.save.v4',
+  'gnorpbuzz.save.v5',
 ];
 
 export function serialize(state: GameState): string {
@@ -26,6 +27,10 @@ export function deserialize(blob: string): GameState {
   }
 
   const merged = { ...base, ...parsed } as GameState;
+
+  // Defensive defaults for honey reservoir — older shapes may lack these.
+  if (typeof merged.hive.honey !== 'number') merged.hive.honey = 0;
+  if (typeof merged.hive.honeyCap !== 'number') merged.hive.honeyCap = base.hive.honeyCap;
 
   // Defensive defaults — fields that may be missing from partial saves.
   if (!merged.flowers) merged.flowers = base.flowers;

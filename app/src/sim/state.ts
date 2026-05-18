@@ -1,12 +1,19 @@
-// Plain-data game state for the excavation MVP.
+// Plain-data game state for the wizard/excavation MVP.
+//
+// LORE: the bees are wizards. Foragers are the mundane caste — they harvest
+// pollen from meadow flowers and the hive refines it into HONEY, the colony's
+// mana. Spellcaster bees (Geomancer, Cantor) burn honey to cast spells that
+// crack the rock. If the hive has no honey, casters drift into an idle swarm
+// near the hive until the foragers refill the reservoir.
+//
 // One Hive: a honeycomb of hex cells. Each filled cell holds one worker —
-// a Forager (gathers pollen) or an Excavator (deals damage to the dig site).
-// Cells are unlocked one at a time outward from the comb. Same-role
-// neighbors grant an adjacency synergy bonus, so clustering by role matters.
-// Worker assignments are permanent — there is no clearing or reassigning.
-// A single Dig Site sits in the meadow; bees chip its HP down; at 0 HP an
-// ancient artifact (comically just human garbage) is revealed and a Scientist
-// Bee journal entry pops. Each artifact unlocks the next dig site tier.
+// a Forager (gathers pollen → honey), a Geomancer (melee earth-magic; dives
+// onto the rock), or a Cantor (cantrip-tier hover-caster; lobs sparks at the
+// rock from above the hive). Same-role neighbors grant an adjacency synergy
+// bonus, so clustering by role matters. Worker assignments are permanent.
+// A single Dig Site sits in the meadow; spellcasters chip its HP down; at 0
+// HP an ancient artifact (comically just human garbage) is revealed and a
+// Scientist Bee journal entry pops. Each artifact unlocks the next tier.
 
 export type Currency = 'pollen';
 
@@ -15,9 +22,12 @@ export type UpgradeId =
   | 'forager-swift-wings'
   | 'forager-quick-forage'
   | 'forager-pollen-pouches'
-  | 'excavator-sharp-stinger'
-  | 'excavator-swift-strike'
-  | 'excavator-heavy-swarm';
+  | 'geomancer-sharp-stinger'
+  | 'geomancer-swift-strike'
+  | 'geomancer-heavy-swarm'
+  | 'cantor-quicker-cantrip'
+  | 'cantor-twin-spark'
+  | 'cantor-mana-sip';
 
 export interface UpgradeDef {
   id: UpgradeId;
@@ -61,19 +71,19 @@ export const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
     costGrowth: 1.8,
     currency: 'pollen',
   },
-  'excavator-sharp-stinger': {
-    id: 'excavator-sharp-stinger',
-    role: 'excavator',
+  'geomancer-sharp-stinger': {
+    id: 'geomancer-sharp-stinger',
+    role: 'geomancer',
     name: 'Sharpened Stinger',
-    blurb: '+50% damage per strike',
+    blurb: '+50% damage per spell',
     maxTier: 5,
     baseCost: 6,
     costGrowth: 1.7,
     currency: 'pollen',
   },
-  'excavator-swift-strike': {
-    id: 'excavator-swift-strike',
-    role: 'excavator',
+  'geomancer-swift-strike': {
+    id: 'geomancer-swift-strike',
+    role: 'geomancer',
     name: 'Hasty Recruits',
     blurb: '−15% respawn time',
     maxTier: 3,
@@ -81,9 +91,9 @@ export const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
     costGrowth: 1.7,
     currency: 'pollen',
   },
-  'excavator-heavy-swarm': {
-    id: 'excavator-heavy-swarm',
-    role: 'excavator',
+  'geomancer-heavy-swarm': {
+    id: 'geomancer-heavy-swarm',
+    role: 'geomancer',
     name: 'Heavy Swarm',
     blurb: '+15% flight speed to dig site',
     maxTier: 3,
@@ -91,11 +101,43 @@ export const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
     costGrowth: 1.8,
     currency: 'pollen',
   },
+  'cantor-quicker-cantrip': {
+    id: 'cantor-quicker-cantrip',
+    role: 'cantor',
+    name: 'Quicker Cantrip',
+    blurb: '−20% time between sparks',
+    maxTier: 5,
+    baseCost: 4,
+    costGrowth: 1.6,
+    currency: 'pollen',
+  },
+  'cantor-twin-spark': {
+    id: 'cantor-twin-spark',
+    role: 'cantor',
+    name: 'Twin Spark',
+    blurb: '+25% spark damage',
+    maxTier: 3,
+    baseCost: 6,
+    costGrowth: 1.7,
+    currency: 'pollen',
+  },
+  'cantor-mana-sip': {
+    id: 'cantor-mana-sip',
+    role: 'cantor',
+    name: 'Mana Sip',
+    blurb: 'Cantrips refund 1 mana every 4 casts',
+    maxTier: 3,
+    baseCost: 10,
+    costGrowth: 1.9,
+    currency: 'pollen',
+  },
 };
 
 // The role discriminator, shared by worker bees, cell assignments, and the
-// per-role upgrade paths.
-export type HiveType = 'forager' | 'excavator';
+// per-role upgrade paths. Foragers are the mundane caste (gather pollen,
+// fuel the honey/mana reservoir). Geomancers and Cantors are spellcasters
+// that burn honey to attack the dig site.
+export type HiveType = 'forager' | 'geomancer' | 'cantor';
 export type CellRole = HiveType;
 
 // ---- Underground chambers ----
@@ -105,7 +147,7 @@ export type CellRole = HiveType;
 // owns it. Each chamber has a fixed plot in the underground grid and a
 // list of UpgradeIds it gates. See `docs/underground.md` for the design.
 
-export type ChamberId = 'forager-den' | 'excavator-hall';
+export type ChamberId = 'forager-den' | 'geomancer-hall' | 'cantor-cloister';
 
 export interface ChamberSpec {
   id: ChamberId;
@@ -138,17 +180,30 @@ export const CHAMBERS: ChamberSpec[] = [
     plot: { row: 0, col: 0 },
   },
   {
-    id: 'excavator-hall',
-    name: 'Excavator Hall',
+    id: 'geomancer-hall',
+    name: 'Geomancer Hall',
     glyph: '⛏',
     digCost: 30,
     currency: 'pollen',
     upgradeIds: [
-      'excavator-sharp-stinger',
-      'excavator-swift-strike',
-      'excavator-heavy-swarm',
+      'geomancer-sharp-stinger',
+      'geomancer-swift-strike',
+      'geomancer-heavy-swarm',
     ],
     plot: { row: 0, col: 1 },
+  },
+  {
+    id: 'cantor-cloister',
+    name: 'Cantor Cloister',
+    glyph: '✦',
+    digCost: 45,
+    currency: 'pollen',
+    upgradeIds: [
+      'cantor-quicker-cantrip',
+      'cantor-twin-spark',
+      'cantor-mana-sip',
+    ],
+    plot: { row: 1, col: 0 },
   },
 ];
 
@@ -169,7 +224,7 @@ export function isChamberBuilt(state: GameState, id: string): boolean {
 // Cells use axial hex coordinates (q, r). A cell present in `hive.cells` is
 // unlocked. `role` is:
 //   null     — unlocked but empty
-//   'forager' / 'excavator' — holds one worker of that role (permanent)
+//   'forager' / 'geomancer' — holds one worker of that role (permanent)
 
 export interface HiveCell {
   q: number;
@@ -180,6 +235,12 @@ export interface HiveCell {
 export interface HiveData {
   id: string;
   pollen: number;
+  // Honey = mana. Foragers refine deposited pollen into honey up to
+  // `honeyCap`. Spellcasters burn honey to cast spells; with empty reserves
+  // they swarm idle near the hive until foragers refill. Excess pollen above
+  // the cap keeps accumulating as pollen (still the upgrade currency).
+  honey: number;
+  honeyCap: number;
   cells: HiveCell[];
 }
 
@@ -341,19 +402,37 @@ export const TUNING = {
   MAX_COMB_RADIUS: 4,
 
   // Adjacency synergy: each same-role neighbor of a filled cell grants this
-  // fractional bonus. Foragers gain flight speed; excavators gain damage.
+  // fractional bonus. Foragers gain flight speed; geomancers gain damage.
   SYNERGY_FORAGER_SPEED: 0.08,
-  SYNERGY_EXCAVATOR_DAMAGE: 0.12,
+  SYNERGY_GEOMANCER_DAMAGE: 0.12,
 
   // Dig site
   DIG_SITE_TIER_1_HP: 40,
 
-  // Excavator strike — each bee gets ONE strike then expires. The hive
+  // Geomancer spell — each bee gets ONE cast then expires. The hive
   // respawns a fresh bee on a per-slot cooldown so we always see a stream
   // of new bees flying toward the dig site.
-  EXCAVATOR_BASE_DAMAGE: 1,
-  EXCAVATOR_WINDUP_MS: 400,
-  EXCAVATOR_RESPAWN_MS: 1800, // base time between expiration and next spawn
+  GEOMANCER_BASE_DAMAGE: 1,
+  GEOMANCER_WINDUP_MS: 400,
+  GEOMANCER_RESPAWN_MS: 1800, // base time between expiration and next spawn
+
+  // Honey / mana economy.
+  HONEY_CAP: 10,
+  POLLEN_PER_HONEY: 1, // pollen consumed to produce one honey (also accrues to upgrade pollen)
+  GEOMANCER_MANA_COST: 2,
+  CANTOR_MANA_COST: 1,
+
+  // Cantor cantrip — a hovering caster that fires a slow projectile at the
+  // dig site. Damage is a fraction of a geomancer dive; cadence is faster.
+  CANTOR_BASE_DAMAGE: 0.35,
+  CANTOR_CAST_INTERVAL_MS: 2400, // between two successful casts
+  CANTOR_PROJECTILE_SPEED: 460,  // px/sec for the spark on its way to the rock
+  CANTOR_HOVER_OFFSET_Y: -55,    // how far above the home cell the cantor floats
+
+  // When a spellcaster can't afford the mana for its next cast it falls into
+  // an idle "swarm" loop for this long before retrying. Keeps the bee visible
+  // (drifting near the hive) instead of vanishing.
+  SPELL_IDLE_RETRY_MS: 2800,
 
   // Ascent (endgame)
   ASCENT_LAUNCH_MS: 1200,
@@ -399,7 +478,7 @@ export function createInitialState(): GameState {
   return {
     tick: 0,
     elapsedMs: 0,
-    hive: { id: 'hive', pollen: 0, cells },
+    hive: { id: 'hive', pollen: 0, honey: 0, honeyCap: TUNING.HONEY_CAP, cells },
     flowers,
     digSite: {
       id: 'dig-site',
@@ -445,6 +524,102 @@ export function upgradesForRole(role: HiveType): UpgradeDef[] {
   return Object.values(UPGRADE_DEFS).filter((u) => u.role === role);
 }
 
+// Human-readable description of an upgrade's effect at a given tier and at
+// the *next* tier. Used by the hover tooltip so the player can see the
+// concrete impact of their next purchase, not just a generic "+15% per
+// tier" blurb. `nextLabel` is null when the upgrade is already maxed.
+export interface UpgradeEffectSummary {
+  currentLabel: string;
+  nextLabel: string | null;
+  perTierBlurb: string;
+}
+
+export function describeUpgradeEffect(
+  state: GameState,
+  id: UpgradeId,
+): UpgradeEffectSummary {
+  const def = UPGRADE_DEFS[id];
+  const tier = getUpgradeTier(state, id);
+  const maxed = tier >= def.maxTier;
+  const nextTier = maxed ? tier : tier + 1;
+
+  const fmtMul = (m: number): string =>
+    `${m.toFixed(2)}× (+${Math.round((m - 1) * 100)}%)`;
+  const fmtRed = (m: number): string =>
+    `${Math.round(m * 100)}% of base (−${Math.round((1 - m) * 100)}%)`;
+
+  let currentLabel: string;
+  let nextLabel: string | null;
+
+  switch (id) {
+    case 'forager-swift-wings': {
+      const cur = Math.pow(1.15, tier);
+      const nxt = Math.pow(1.15, nextTier);
+      currentLabel = `Flight speed ${fmtMul(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtMul(nxt)}`;
+      break;
+    }
+    case 'forager-quick-forage': {
+      const cur = Math.pow(0.8, tier);
+      const nxt = Math.pow(0.8, nextTier);
+      currentLabel = `Harvest time ${fmtRed(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtRed(nxt)}`;
+      break;
+    }
+    case 'forager-pollen-pouches': {
+      const cur = 1 + tier;
+      const nxt = 1 + nextTier;
+      currentLabel = `Carrying ${cur} pollen per trip`;
+      nextLabel = maxed ? null : `→ ${nxt} pollen per trip`;
+      break;
+    }
+    case 'geomancer-sharp-stinger': {
+      const cur = Math.pow(1.5, tier);
+      const nxt = Math.pow(1.5, nextTier);
+      currentLabel = `Spell damage ${fmtMul(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtMul(nxt)}`;
+      break;
+    }
+    case 'geomancer-swift-strike': {
+      const cur = Math.pow(0.85, tier);
+      const nxt = Math.pow(0.85, nextTier);
+      currentLabel = `Respawn time ${fmtRed(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtRed(nxt)}`;
+      break;
+    }
+    case 'geomancer-heavy-swarm': {
+      const cur = Math.pow(1.15, tier);
+      const nxt = Math.pow(1.15, nextTier);
+      currentLabel = `Flight speed ${fmtMul(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtMul(nxt)}`;
+      break;
+    }
+    case 'cantor-quicker-cantrip': {
+      const cur = Math.pow(0.8, tier);
+      const nxt = Math.pow(0.8, nextTier);
+      currentLabel = `Cast interval ${fmtRed(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtRed(nxt)}`;
+      break;
+    }
+    case 'cantor-twin-spark': {
+      const cur = Math.pow(1.25, tier);
+      const nxt = Math.pow(1.25, nextTier);
+      currentLabel = `Spark damage ${fmtMul(cur)}`;
+      nextLabel = maxed ? null : `→ ${fmtMul(nxt)}`;
+      break;
+    }
+    case 'cantor-mana-sip': {
+      // Tier 0: no refund. Tier N≥1: refund 1 mana every max(4, 7-N) casts.
+      const everyAt = (t: number): string =>
+        t <= 0 ? 'No refund' : `1 mana every ${Math.max(4, 7 - t)} casts`;
+      currentLabel = everyAt(tier);
+      nextLabel = maxed ? null : `→ ${everyAt(nextTier)}`;
+      break;
+    }
+  }
+  return { currentLabel, nextLabel, perTierBlurb: def.blurb };
+}
+
 // ---- Hex grid helpers ----
 
 // The six axial-coordinate neighbor directions for a pointy-top hex grid.
@@ -473,7 +648,11 @@ export function cellAt(hive: HiveData, q: number, r: number): HiveCell | undefin
 }
 
 export function isWorkerCell(cell: HiveCell): boolean {
-  return cell.role === 'forager' || cell.role === 'excavator';
+  return (
+    cell.role === 'forager' ||
+    cell.role === 'geomancer' ||
+    cell.role === 'cantor'
+  );
 }
 
 export function countRole(state: GameState, role: CellRole): number {
@@ -486,6 +665,39 @@ export function totalBees(state: GameState): number {
 
 export function totalPollen(state: GameState): number {
   return state.hive.pollen;
+}
+
+export function totalHoney(state: GameState): number {
+  return state.hive.honey;
+}
+
+export function honeyCap(state: GameState): number {
+  return state.hive.honeyCap;
+}
+
+// Refine deposited pollen into honey, capped at the hive's reservoir.
+// Returns the amount of honey actually added. Pollen passed in is also
+// counted toward the upgrade-currency pool by the caller — the same pollen
+// drop both feeds the spell economy AND the upgrade economy.
+export function refineHoney(state: GameState, pollen: number): number {
+  const space = Math.max(0, state.hive.honeyCap - state.hive.honey);
+  const refined = Math.min(space, Math.floor(pollen / TUNING.POLLEN_PER_HONEY));
+  state.hive.honey += refined;
+  return refined;
+}
+
+// Spend honey if there is enough. Returns true if the spell could be cast.
+export function spendHoney(state: GameState, amount: number): boolean {
+  if (state.hive.honey < amount) return false;
+  state.hive.honey -= amount;
+  return true;
+}
+
+// Mana cost for a single spell of the given caster role.
+export function manaCostFor(role: CellRole): number {
+  if (role === 'geomancer') return TUNING.GEOMANCER_MANA_COST;
+  if (role === 'cantor') return TUNING.CANTOR_MANA_COST;
+  return 0;
 }
 
 // Number of same-role neighbors for the cell at (q, r). Returns 0 for cells
@@ -557,15 +769,36 @@ export function pendingArtifact(state: GameState): ArtifactSpec | null {
   return ARTIFACTS.find((a) => a.id === state.artifacts.pending) ?? null;
 }
 
-// ---- Excavator stat helpers (used by Bee + UI) ----
+// ---- Geomancer stat helpers (used by Bee + UI) ----
 
 // Global damage per strike, before per-cell adjacency synergy is applied.
-export function excavatorDamagePerStrike(state: GameState): number {
-  const sharp = getUpgradeTier(state, 'excavator-sharp-stinger');
-  return TUNING.EXCAVATOR_BASE_DAMAGE * Math.pow(1.5, sharp);
+export function geomancerDamagePerStrike(state: GameState): number {
+  const sharp = getUpgradeTier(state, 'geomancer-sharp-stinger');
+  return TUNING.GEOMANCER_BASE_DAMAGE * Math.pow(1.5, sharp);
 }
 
-export function excavatorRespawnMs(state: GameState): number {
-  const swift = getUpgradeTier(state, 'excavator-swift-strike');
-  return TUNING.EXCAVATOR_RESPAWN_MS * Math.pow(0.85, swift);
+export function geomancerRespawnMs(state: GameState): number {
+  const swift = getUpgradeTier(state, 'geomancer-swift-strike');
+  return TUNING.GEOMANCER_RESPAWN_MS * Math.pow(0.85, swift);
+}
+
+// ---- Cantor stat helpers ----
+
+export function cantorDamagePerSpark(state: GameState): number {
+  const twin = getUpgradeTier(state, 'cantor-twin-spark');
+  return TUNING.CANTOR_BASE_DAMAGE * Math.pow(1.25, twin);
+}
+
+export function cantorCastIntervalMs(state: GameState): number {
+  const quicker = getUpgradeTier(state, 'cantor-quicker-cantrip');
+  return TUNING.CANTOR_CAST_INTERVAL_MS * Math.pow(0.8, quicker);
+}
+
+// How often a cantor's cast refunds 1 mana (Mana Sip). 0 means no refund.
+// Each tier shaves one cast off the refund cycle: 0 → never, 1 → every 6,
+// 2 → every 5, 3 → every 4.
+export function cantorRefundEveryNCasts(state: GameState): number {
+  const sip = getUpgradeTier(state, 'cantor-mana-sip');
+  if (sip <= 0) return 0;
+  return Math.max(4, 7 - sip);
 }

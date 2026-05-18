@@ -16,7 +16,7 @@ interface ChamberSprite {
   container: Container;
   body: Graphics;
   // Building-themed animation that runs inside built chambers. Forager Den
-  // gets a bobbing flower bloom, Excavator Hall a swinging pickaxe. Per-
+  // gets a bobbing flower bloom, Geomancer Hall a swinging pickaxe. Per-
   // chamber visual identity that distinguishes chambers at a glance.
   decoration: Graphics;
   glyph: Text;
@@ -247,8 +247,10 @@ export class UndergroundView {
     const cy = -UNDERGROUND.CHAMBER_H * 0.04;
     if (sprite.spec.id === 'forager-den') {
       drawForagerDecoration(g, 0, cy, t);
-    } else if (sprite.spec.id === 'excavator-hall') {
-      drawExcavatorDecoration(g, 0, cy, t);
+    } else if (sprite.spec.id === 'geomancer-hall') {
+      drawGeomancerDecoration(g, 0, cy, t);
+    } else if (sprite.spec.id === 'cantor-cloister') {
+      drawCantorDecoration(g, 0, cy, t);
     }
   }
 
@@ -335,9 +337,9 @@ function drawForagerDecoration(g: Graphics, cx: number, cy: number, t: number): 
   }
 }
 
-// Excavator Hall interior — a pickaxe swings from a fixed pivot, striking
+// Geomancer Hall interior — a pickaxe swings from a fixed pivot, striking
 // the floor with a small spark burst at the bottom of each arc.
-function drawExcavatorDecoration(g: Graphics, cx: number, cy: number, t: number): void {
+function drawGeomancerDecoration(g: Graphics, cx: number, cy: number, t: number): void {
   const phase = (Math.sin(t * 2.2) + 1) * 0.5;
   const swing = -Math.PI / 2 + (1 - phase) * (Math.PI * 0.45);
   const pivotX = cx - 2.5;
@@ -369,6 +371,31 @@ function drawExcavatorDecoration(g: Graphics, cx: number, cy: number, t: number)
         .fill({ color: 0xfff2cf, alpha: brightness });
     }
     g.circle(ex, ey + 0.5, 0.9).fill({ color: 0x3a2a18, alpha: brightness * 0.7 });
+  }
+}
+
+// Cantor Cloister interior — a floating spellbook with three orbiting motes
+// of light. Reads as the cantrip caster's study/library.
+function drawCantorDecoration(g: Graphics, cx: number, cy: number, t: number): void {
+  const bob = Math.sin(t * 1.4) * 0.7;
+  // Open book — two trapezoidal pages with a dark spine.
+  const bx = cx;
+  const by = cy + bob;
+  g.poly([bx - 6, by + 3, bx - 5, by - 2, bx - 0.4, by - 1, bx - 0.4, by + 3])
+    .fill(0xf3e8c8)
+    .stroke({ color: 0x6e4a22, width: 0.6 });
+  g.poly([bx + 6, by + 3, bx + 5, by - 2, bx + 0.4, by - 1, bx + 0.4, by + 3])
+    .fill(0xf3e8c8)
+    .stroke({ color: 0x6e4a22, width: 0.6 });
+  g.rect(bx - 0.5, by - 1.5, 1, 5).fill(0x3a1a78);
+  // Three orbiting motes of light circling the book.
+  for (let i = 0; i < 3; i++) {
+    const a = t * 1.7 + (i * Math.PI * 2) / 3;
+    const orbitR = 7;
+    const ox = bx + Math.cos(a) * orbitR;
+    const oy = by + Math.sin(a) * orbitR * 0.45 - 2;
+    g.circle(ox, oy, 1.6).fill({ color: 0x9a7adf, alpha: 0.35 });
+    g.circle(ox, oy, 0.8).fill(0xfff2cf);
   }
 }
 

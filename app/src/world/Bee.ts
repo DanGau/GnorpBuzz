@@ -2,8 +2,14 @@ import type { GameState } from '../sim/state';
 import {
   TUNING,
   getUpgradeTier,
-  excavatorDamagePerStrike,
+  geomancerDamagePerStrike,
+  cantorDamagePerSpark,
+  cantorCastIntervalMs,
+  cantorRefundEveryNCasts,
   cellSynergy,
+  refineHoney,
+  spendHoney,
+  manaCostFor,
 } from '../sim/state';
 import type { World } from './World';
 
@@ -14,7 +20,7 @@ interface BeeStats {
 }
 
 // `synergy` is the count of same-role neighbor cells for this bee's home
-// cell — foragers convert it into flight speed, excavators into damage.
+// cell — foragers convert it into flight speed, geomancers into damage.
 function statsFor(role: BeeRole, state: GameState, synergy: number): BeeStats {
   const base: BeeStats = { speedMul: 1, harvestMul: 1, carryAmount: 1 };
   if (role === 'forager') {
@@ -23,27 +29,36 @@ function statsFor(role: BeeRole, state: GameState, synergy: number): BeeStats {
       (1 + TUNING.SYNERGY_FORAGER_SPEED * synergy);
     base.harvestMul = Math.pow(0.8, getUpgradeTier(state, 'forager-quick-forage'));
     base.carryAmount = 1 + getUpgradeTier(state, 'forager-pollen-pouches');
-  } else {
-    base.speedMul = Math.pow(1.15, getUpgradeTier(state, 'excavator-heavy-swarm'));
+  } else if (role === 'geomancer') {
+    base.speedMul = Math.pow(1.15, getUpgradeTier(state, 'geomancer-heavy-swarm'));
   }
+  // Cantor uses no flight speed multipliers — it hovers in place and casts.
   return base;
 }
 
-export type BeeRole = 'forager' | 'excavator';
+export type BeeRole = 'forager' | 'geomancer' | 'cantor';
 
 export type BeeState =
   | 'idle'
+  // shared: a spellcaster sitting on empty mana drifts in a loose swarm
+  // near its home cell until honey is available again.
+  | 'idle-swarm'
   // forager
   | 'flying-to-flower'
   | 'harvesting'
   | 'flying-home-with-pollen'
-  // excavator (one-shot: spawn → climb to hover → bob → dive → bonk → bounce → expire)
+  // geomancer (one-shot: spawn → climb to hover → bob → dive → bonk → bounce → expire)
   | 'flying-to-hover'
   | 'hovering'
   | 'diving'
   | 'striking-impact'
   | 'bouncing'
-  | 'expired';
+  | 'expired'
+  // cantor (persistent: rise to hover slot above home cell, then cycle
+  // between hovering and casting sparks toward the dig site)
+  | 'cantor-rising'
+  | 'cantor-hovering'
+  | 'cantor-casting';
 
 export type BeeCarrying = 'none' | 'pollen';
 
@@ -86,11 +101,11 @@ export class Bee {
   consecutiveIdleResets: number;
   tipPhaseMs: number;
   nextTipScheduledAtMs: number;
-  // Excavator-only: tracks position offset relative to dig site so multiple
-  // excavators don't stack into the same pixel.
+  // Geomancer-only: tracks position offset relative to dig site so multiple
+  // geomancers don't stack into the same pixel.
   swarmOffsetX: number;
   swarmOffsetY: number;
-  // Excavator-only: cached strike geometry. impactX/Y is the boulder-surface
+  // Geomancer-only: cached strike geometry. impactX/Y is the boulder-surface
   // point the bee will ram. windupX/Y is the retreat point used during the
   // windup phase before charging forward.
   impactX: number;
@@ -101,6 +116,14 @@ export class Bee {
   // charge animation knows which direction "forward" is.
   ramDirX: number;
   ramDirY: number;
+  // Cantor-only bookkeeping. `castTimerMs` counts down between successful
+  // casts (when 0, attempt the next cast). `castCount` is the running total
+  // of casts this bee has performed — used by Mana Sip to refund every Nth
+  // cast. `hoverX/Y` is the world-space hover slot above the home cell.
+  castTimerMs: number;
+  castCount: number;
+  hoverX: number;
+  hoverY: number;
 
   constructor(
     role: BeeRole,
@@ -150,6 +173,12 @@ export class Bee {
     this.windupY = 0;
     this.ramDirX = 1;
     this.ramDirY = 0;
+    this.castTimerMs = 0;
+    this.castCount = 0;
+    // Cantor hover slot — a small lateral jitter so a cluster of cantors
+    // spreads out above the comb rather than stacking on one pixel.
+    this.hoverX = homeX + (Math.random() - 0.5) * 18;
+    this.hoverY = homeY + TUNING.CANTOR_HOVER_OFFSET_Y + (Math.random() - 0.5) * 10;
   }
 
   private flyToward(dtMs: number, state?: GameState): boolean {
@@ -180,9 +209,9 @@ export class Bee {
     const accelEase = accelFrac * (2 - accelFrac);
     let decelDist = 70;
     let easeFloor = 0.18;
-    // Excavators are eager attackers — they zoom up to the hover spot with
+    // Geomancers are eager attackers — they zoom up to the hover spot with
     // minimal deceleration. Foragers keep the gentle approach.
-    if (this.role === 'excavator') {
+    if (this.role === 'geomancer') {
       baseSpeed *= 1.5;
       decelDist = 18;
       easeFloor = 0.6;
@@ -248,8 +277,10 @@ export class Bee {
 
     if (this.role === 'forager') {
       this.updateForager(dtMs, state, world);
+    } else if (this.role === 'cantor') {
+      this.updateCantor(dtMs, state, world);
     } else {
-      this.updateExcavator(dtMs, state, world);
+      this.updateGeomancer(dtMs, state, world);
     }
   }
 
@@ -332,7 +363,15 @@ export class Bee {
         }
         if (this.flyToward(dtMs, state)) {
           state.hive.pollen += this.carryAmount;
+          // Refine some of the deposit into honey/mana up to the cap. Excess
+          // pollen still sits in the upgrade pool — same deposit, two pools.
+          const refined = refineHoney(state, this.carryAmount);
           world.particles.emit('pollenPuff', this.x, this.y, 4 + this.carryAmount * 2);
+          if (refined > 0) {
+            // Visual chain: pollen puff at the entrance + jar bump + sparkle
+            // at the jar. Reads as the deposit "becoming" mana in the jar.
+            world.emitManaRefine(refined);
+          }
           this.pulseShake(state);
           this.carrying = 'none';
           this.carryAmount = 0;
@@ -381,7 +420,7 @@ export class Bee {
     this.targetFlowerId = null;
   }
 
-  // -------------------- Excavator --------------------
+  // -------------------- Geomancer --------------------
   // One-shot dive-bomb lifecycle:
   //   spawn → flying-to-hover (climb to a hover spot above the boulder)
   //         → hovering        (bob in mid-air, build anticipation)
@@ -390,12 +429,29 @@ export class Bee {
   //         → bouncing        (knocked back up and away, arcing out)
   //         → expired         (hive queues a respawn)
 
-  private updateExcavator(dtMs: number, state: GameState, world: World): void {
+  private updateGeomancer(dtMs: number, state: GameState, world: World): void {
     const siteActive = state.digSite.state === 'active';
 
     switch (this.state) {
+      case 'idle-swarm': {
+        // Out of mana — drift in a small wandering loop near the hive until
+        // the retry timer expires, then drop back to idle to check honey.
+        this.tickIdleSwarm(dtMs, state, world);
+        break;
+      }
       case 'idle': {
         if (siteActive) {
+          // Mana gate. A geomancer needs honey to cast its dive spell.
+          // Pay up front so the player sees the reservoir drop the instant
+          // the bee commits — and so an empty reservoir parks the bee in
+          // an idle swarm instead of letting it fly out unfunded.
+          if (!spendHoney(state, manaCostFor('geomancer'))) {
+            this.enterIdleSwarm(world);
+            break;
+          }
+          // Mana flows out of the jar toward the bee that just committed
+          // to fly. Visual chain: jar squish → orb to bee → bee dives.
+          world.emitManaDraw(this.x, this.y);
           const site = world.digSite;
           if (site) {
             const sp = site.strikePoint();
@@ -410,8 +466,8 @@ export class Bee {
             this.ramDirX = 0;
             this.ramDirY = 1;
             // Fly to the hover point with a brisk approach (no late decel
-            // sag — excavators are eager). flyToward still arrives cleanly
-            // because we override the easing for excavator flight below.
+            // sag — geomancers are eager). flyToward still arrives cleanly
+            // because we override the easing for geomancer flight below.
             this.setFlightTarget(this.windupX, this.windupY);
             this.state = 'flying-to-hover';
           } else {
@@ -487,8 +543,8 @@ export class Bee {
           this.y = this.impactY;
           const synergy = cellSynergy(state.hive, this.cellQ, this.cellR);
           const dmg =
-            excavatorDamagePerStrike(state) *
-            (1 + TUNING.SYNERGY_EXCAVATOR_DAMAGE * synergy);
+            geomancerDamagePerStrike(state) *
+            (1 + TUNING.SYNERGY_GEOMANCER_DAMAGE * synergy);
           state.digSite.hp = Math.max(0, state.digSite.hp - dmg);
           world.particles.emit('crashDust', this.impactX, this.impactY + 6, 12);
           world.particles.emit('sparkle', this.impactX, this.impactY, 3);
@@ -547,7 +603,141 @@ export class Bee {
     }
   }
 
+  // -------------------- Cantor --------------------
+  //
+  // Persistent cantrip caster. Rises from its home cell to a hover slot
+  // just above the comb, then cycles between hovering and casting tiny
+  // sparks at the dig site. Cantors never fly to the rock and never expire;
+  // they keep casting as long as the cell exists.
+  //
+  //   spawn → cantor-rising (ascend to hover slot)
+  //         → cantor-hovering (idle bob; cast timer ticks down)
+  //         → cantor-casting  (brief mid-air windup; emit spark; deal damage)
+  //         → cantor-hovering (loop)
+  //
+  // If a cast is attempted with empty honey reserves, the cantor falls into
+  // the shared idle-swarm state until honey is available again.
+
+  private updateCantor(dtMs: number, state: GameState, world: World): void {
+    const siteActive = state.digSite.state === 'active';
+
+    switch (this.state) {
+      case 'idle-swarm': {
+        this.tickIdleSwarm(dtMs, state, world);
+        // Cantors return to their hover slot specifically (not just 'idle')
+        // when the swarm retry fires — so we override the post-swarm target.
+        // The cast widens the union back out since the switch arm narrowed it.
+        if ((this.state as BeeState) === 'idle') {
+          this.setFlightTarget(this.hoverX, this.hoverY);
+          this.state = 'cantor-rising';
+        }
+        break;
+      }
+      case 'idle':
+      case 'cantor-rising': {
+        // Climb to hover slot above the home cell, then settle into the
+        // hovering cast loop.
+        if (this.state === 'idle') {
+          this.setFlightTarget(this.hoverX, this.hoverY);
+          this.state = 'cantor-rising';
+        }
+        if (this.flyToward(dtMs, state)) {
+          this.state = 'cantor-hovering';
+          this.castTimerMs = cantorCastIntervalMs(state) * 0.5; // first cast comes soon
+        }
+        break;
+      }
+      case 'cantor-hovering': {
+        // Bob in place. Slight horizontal drift so cantors don't look static.
+        this.prevX = this.x;
+        this.prevY = this.y;
+        const bob = Math.sin((state.elapsedMs + this.seed * 1000) / 320) * 2.2;
+        const sway = Math.sin((state.elapsedMs + this.seed * 600) / 540) * 1.4;
+        this.x = this.hoverX + sway;
+        this.y = this.hoverY + bob;
+
+        if (!siteActive) break;
+
+        this.castTimerMs -= dtMs;
+        if (this.castTimerMs <= 0) {
+          // Attempt to cast. Mana gate happens here.
+          if (!spendHoney(state, manaCostFor('cantor'))) {
+            this.enterIdleSwarm(world);
+            break;
+          }
+          // Mana orb flies from the jar up to the cantor — connects the
+          // jar dropping to the spark leaving the bee a moment later.
+          world.emitManaDraw(this.x, this.y);
+          // Mana Sip refund — every Nth cast returns 1 honey (still capped).
+          const refundEvery = cantorRefundEveryNCasts(state);
+          this.castCount += 1;
+          if (refundEvery > 0 && this.castCount % refundEvery === 0) {
+            refineHoney(state, 1);
+          }
+
+          // Apply damage immediately to the dig site. The flying spark is
+          // cosmetic — keeps the sim deterministic and lets the projectile
+          // be skipped at zero cost in headless tests.
+          const synergy = cellSynergy(state.hive, this.cellQ, this.cellR);
+          const dmg =
+            cantorDamagePerSpark(state) *
+            (1 + TUNING.SYNERGY_GEOMANCER_DAMAGE * synergy);
+          state.digSite.hp = Math.max(0, state.digSite.hp - dmg);
+
+          // Visual spark heading toward the rock.
+          const site = world.digSite;
+          if (site) {
+            const sp = site.strikePoint();
+            world.emitSpark(this.x, this.y, sp.x, sp.y);
+            world.particles.emit('sparkle', this.x, this.y, 2);
+          }
+          this.pulseShake(state, 90);
+          this.state = 'cantor-casting';
+          this.workTimer = 160;
+        }
+        break;
+      }
+      case 'cantor-casting': {
+        // Brief mid-air recoil pose. View handles the squash; sim just
+        // counts time and returns to hovering.
+        this.prevX = this.x;
+        this.prevY = this.y;
+        this.workTimer -= dtMs;
+        if (this.workTimer <= 0) {
+          this.state = 'cantor-hovering';
+          this.castTimerMs = cantorCastIntervalMs(state);
+        }
+        break;
+      }
+      default: {
+        this.state = 'cantor-rising';
+        this.setFlightTarget(this.hoverX, this.hoverY);
+      }
+    }
+  }
+
   // -------------------- Shared --------------------
+
+  // Park a spellcaster bee in the shared idle-swarm state. Picks a small
+  // wandering target near the home cell and starts the retry timer.
+  private enterIdleSwarm(world: World): void {
+    this.state = 'idle-swarm';
+    this.idleWaitMs = TUNING.SPELL_IDLE_RETRY_MS;
+    this.pickIdleTarget(world);
+  }
+
+  // Tick the idle-swarm loop: drift toward the swarm target, occasionally
+  // pick a new one, and exit back to 'idle' when the retry timer expires.
+  private tickIdleSwarm(dtMs: number, state: GameState, world: World): void {
+    this.idleWaitMs -= dtMs;
+    // Pick a fresh wander target every ~500ms so the swarm reads as alive.
+    if (Math.random() < dtMs / 500) this.pickIdleTarget(world);
+    this.flyToward(dtMs, state);
+    if (this.idleWaitMs <= 0) {
+      this.state = 'idle';
+      this.idleWaitMs = 0;
+    }
+  }
 
   private returnToIdle(world: World): void {
     this.state = 'idle';

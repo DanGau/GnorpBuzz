@@ -114,7 +114,8 @@ function configureMenu(
     const firstOnly = mustPlaceForager(state);
     const have = totalPollen(state);
     const fCost = nextWorkerCost(state, 'forager');
-    const xCost = nextWorkerCost(state, 'excavator');
+    const xCost = nextWorkerCost(state, 'geomancer');
+    const cCost = nextWorkerCost(state, 'cantor');
     const opts: RadialOption[] = [
       {
         id: 'forager',
@@ -128,13 +129,22 @@ function configureMenu(
     ];
     if (!firstOnly) {
       opts.push({
-        id: 'excavator',
-        title: 'Excavator',
+        id: 'geomancer',
+        title: 'Geomancer',
         detail: costLabel(xCost),
         glyph: '⛏',
         color: 0xc94a2a,
         enabled: xCost === 0 || have >= xCost,
-        onSelect: () => cb.onAssignCell(q, r, 'excavator'),
+        onSelect: () => cb.onAssignCell(q, r, 'geomancer'),
+      });
+      opts.push({
+        id: 'cantor',
+        title: 'Cantor',
+        detail: costLabel(cCost),
+        glyph: '✦',
+        color: 0x9a7adf,
+        enabled: cCost === 0 || have >= cCost,
+        onSelect: () => cb.onAssignCell(q, r, 'cantor'),
       });
     }
     return opts;

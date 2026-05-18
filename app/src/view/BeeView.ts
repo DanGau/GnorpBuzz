@@ -159,23 +159,37 @@ export class BeeView {
     }
   }
 
-  private drawBee(g: Graphics, role: 'forager' | 'excavator'): void {
+  private drawBee(g: Graphics, role: 'forager' | 'geomancer' | 'cantor'): void {
     g.clear();
-    const bodyColor = role === 'forager' ? 0xffd23f : 0xc94a2a;
+    let bodyColor: number;
+    if (role === 'forager') bodyColor = 0xffd23f;
+    else if (role === 'cantor') bodyColor = 0x9a7adf; // arcane purple
+    else bodyColor = 0xc94a2a;
     g.ellipse(0, 0, 7, 5).fill(bodyColor);
-    // Stripes — black for forager, darker red-brown for excavator.
-    const stripeColor = role === 'forager' ? 0x222222 : 0x501a08;
+    // Stripes — black for forager, deeper tints for the spellcasters.
+    let stripeColor: number;
+    if (role === 'forager') stripeColor = 0x222222;
+    else if (role === 'cantor') stripeColor = 0x3a1a78;
+    else stripeColor = 0x501a08;
     g.rect(-4, -2, 2.5, 4).fill(stripeColor);
     g.rect(1.5, -2, 2.5, 4).fill(stripeColor);
     g.ellipse(-2, -4, 4, 2.5).fill({ color: 0xffffff, alpha: 0.6 });
     g.ellipse(2, -4, 4, 2.5).fill({ color: 0xffffff, alpha: 0.6 });
-    if (role === 'excavator') {
-      // A tiny stinger jutting downward — the excavator's "pickaxe".
+    if (role === 'geomancer') {
+      // A tiny stinger jutting downward — the geomancer's "pickaxe".
       g.poly([0, 4, -2, 8, 2, 8]).fill(0x5a3020).stroke({ color: 0x2a1008, width: 0.8 });
+    } else if (role === 'cantor') {
+      // Pointy wizard hat sitting on the bee's head.
+      g.poly([-2.6, -5, 2.6, -5, 0, -10.5]).fill(0x3a1a78).stroke({ color: 0xfff2cf, width: 0.6, alpha: 0.5 });
+      g.circle(0, -10.5, 0.8).fill(0xfff2cf);
     }
   }
 
-  private drawCarry(g: Graphics, carrying: 'none' | 'pollen', role: 'forager' | 'excavator'): void {
+  private drawCarry(
+    g: Graphics,
+    carrying: 'none' | 'pollen',
+    role: 'forager' | 'geomancer' | 'cantor',
+  ): void {
     void role;
     g.clear();
     if (carrying === 'none') return;

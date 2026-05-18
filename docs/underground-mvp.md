@@ -6,9 +6,9 @@ The first build of the design in `docs/underground.md`. Tightly scoped to prove 
 
 - **Two chamber specs**, both on row 0 (Tier 1, just below the meadow line):
   - **Forager Den** (`forager-den`) — owns `forager-swift-wings`, `forager-quick-forage`, `forager-pollen-pouches`
-  - **Excavator Hall** (`excavator-hall`) — owns `excavator-sharp-stinger`, `excavator-swift-strike`, `excavator-heavy-swarm`
+  - **Geomancer Hall** (`geomancer-hall`) — owns `geomancer-sharp-stinger`, `geomancer-swift-strike`, `geomancer-heavy-swarm`
 - **Two plots**, side by side under the hive. Both start unexcavated.
-- **Dig action** — `digChamber(specId)` action; spends pollen; flips chamber `built = true`. Cost: 20🌼 for Forager Den, 30🌼 for Excavator Hall (cheap so the player can experience the loop within a few minutes).
+- **Dig action** — `digChamber(specId)` action; spends pollen; flips chamber `built = true`. Cost: 20🌼 for Forager Den, 30🌼 for Geomancer Hall (cheap so the player can experience the loop within a few minutes).
 - **Chamber radial menu** — built on the existing `RadialMenu`. An unbuilt plot shows a single **Dig** option; a built chamber shows its 1–N upgrade options (same data the old `ColonyPanel` rendered).
 - **Underground cross-section view** — soil background drawn below the meadow line; chamber sprites; plot affordances. Visible only while the camera is zoomed in.
 - **Camera framing extended downward** when zoomed in so the underground row is in frame alongside the hive.
@@ -27,7 +27,7 @@ The Phase-1 cost curve doesn't need to grow because the player now has to spend 
 Below `MEADOW_Y` (520), add two slot positions on row 0:
 
 ```
-plot 0 (Forager Den)   plot 1 (Excavator Hall)
+plot 0 (Forager Den)   plot 1 (Geomancer Hall)
        x = 180                 x = 320
                   y = 640
 ```
@@ -60,7 +60,7 @@ Hand-verified via `node test-game.cjs` + `eye.cjs verify-quick` after these step
 2. **`debug.grantPollen(100)`.** Click an empty plot. Expect: radial pops with one "Dig" option showing the cost.
 3. **`debug.digChamber('forager-den')`.** Expect: chamber sprite swaps in with brief flourish; tunnel line draws (eventually, when a second is built).
 4. **Click the built chamber.** Expect: radial shows the three forager upgrades with costs.
-5. **`debug.digChamber('excavator-hall')` after `grantPollen(50)`.** Expect: both chambers visible with a tunnel between them.
+5. **`debug.digChamber('geomancer-hall')` after `grantPollen(50)`.** Expect: both chambers visible with a tunnel between them.
 6. **Build passes** (`npm run build` — zero TS errors). **Existing tests pass** (`node test-game.cjs`).
 
 ## Out of scope for this PR

@@ -1,171 +1,145 @@
-# Agent-Based Production — Phase 1
+# Agent-Based Production — Phase 1 (Wizard Reframing)
 
-This doc replaces the formula-based production model from `docs/dps-model.md` for Phase 1. Production is no longer a /sec rate — it emerges from visible bee journeys between flowers, hives, and the vessel.
+This doc replaces the formula-based production model from `docs/dps-model.md` for Phase 1. Production is no longer a /sec rate — it emerges from visible bee journeys between flowers, the hive, and the dig site.
 
-`docs/dps-model.md` still applies for Phase 2+ as the abstract model the upgrades and economy plug into. Phase 1 becomes the visible, agent-driven implementation that those abstractions sit on top of later.
-
-## Resource chain
+## The mana economy
 
 ```
 flower (in meadow)
    ↓  forager flies, harvests for ~3 sec, flies back
-forager hive (pollen pot)
-   ↓  wax-maker walks here, picks up pollen, returns
-wax hive (production interior)
-   ↓  wax-maker spends ~5 sec converting pollen → wax block
-wax hive (block stockpile)
-   ↓  wax-maker (same bee) flies block to vessel, drops it
-vessel construction pile
-   ↓  block snaps into place; vessel grows visibly
+hive cell
+   ↓  deposit credits BOTH pools:
+        - state.hive.pollen += carryAmount    (upgrade currency)
+        - up to honeyCap honey is refined too (mana reservoir, capped)
+
+geomancer cell                cantor cell
+   ↓ check honey ≥ 2            ↓ check honey ≥ 1 (after cast-interval timer)
+   ↓ if yes: pay, dive-bomb     ↓ if yes: pay, fire spark across meadow
+   ↓ if no:  enter idle-swarm   ↓ if no:  enter idle-swarm
+             retry in ~3 sec               retry in ~3 sec
+   ↓ damage applied on impact   ↓ damage applied at cast (spark is cosmetic)
+dig site HP drops, eventually reveals an artifact.
 ```
 
-Two resources are visible: **pollen** (yellow, raw, accumulates at Forager Hives) and **wax blocks** (cream-colored, processed, stockpiled at Wax Hives). The vessel grows in discrete chunks as blocks arrive.
+The two pools — pollen (uncapped, for upgrades) and honey (capped, for spells) — share a single deposit event but have very different shapes. Honey forces casters into idle swarms when foragers can't keep up; pollen quietly accrues for the next chamber dig or upgrade purchase.
 
 ## Buildings
 
-There is exactly **one Forager Hive** and **one Wax Hive** in Phase 1. Hives are fixed structures; you scale by adding individual worker bees, not by building more hives. There is no Queen and no auto-spawning — every bee enters the colony only when the player buys it.
+There is exactly **one Hive**, a honeycomb of hex cells. Each filled cell holds one worker — Forager, Geomancer, or Cantor — and assignments are permanent. The player scales by buying more workers and unlocking more cells, not by building more hives. Adjacency synergy between same-role neighbors rewards cluster planning.
 
-### Forager Hive
+### Cells
 
-- Holds the Forager bees that the player has bought.
-- Holds a visible pollen stockpile (small pots at the base of the skep that fill as foragers deposit).
-- Foragers always return to this single home hive.
-
-### Wax Hive
-
-- Holds the Wax-maker bees that the player has bought.
-- Holds an overflow wax-block stockpile (visible cream hexes beside the workshop) — populated when the vessel isn't accepting more blocks.
-- Wax-makers fetch pollen from the Forager Hive, return, produce a block, then carry it to the vessel.
-
-### Buying bees
-
-- The first bee of each type is **free** — clicking "Build forager" or "Build wax-maker" with zero of that type costs nothing. This is what kicks off play.
-- Subsequent bees cost wax blocks: `cost = ceil(BASE × GROWTH^(currentCount - 1))` where BASE=2, GROWTH=1.3.
-- Bee purchases drain wax from the wax-hive stockpile first, then from the vessel pile if the stockpile is empty. Buying bees while the vessel is full can revert it from `ready` back to `building`.
+- Start with three empty cells in a small connected cluster.
+- New cells unlock outward from the comb at exponential cost (`cellCost(q, r)`).
+- The first worker placed must be a Forager (otherwise the colony soft-locks: no mana, no spells).
+- Workers cost pollen; the first of each role is free.
 
 ### Flowers
 
 - Live in the meadow at predetermined positions.
-- Each has a **yield counter** (default 5 harvests before depleting) and a **regrow timer** (default 60 sec to fully regrow).
-- Visible state: full bloom (harvestable), partially picked (still harvestable, fewer petals), wilted/brown (not harvestable, regrowing).
-- Foragers pick the nearest harvestable flower they can claim; one bee per flower at a time (a flower being harvested is "claimed" until the bee leaves).
+- Each has a **yield counter** (default 5 harvests) and a **regrow timer** (default 60 sec).
+- Multiple foragers can share a flower — its remaining bloom is the claim cap.
 
-### Vessel pad
+### Dig site
 
-- Visible construction pile at center-meadow.
-- Each delivered wax block adds visibly to the pile.
-- Vessel transitions to **`ready`** when N blocks have been delivered (Phase 1: 8 blocks for the paper airplane). The pile transforms into a fully-assembled paper airplane that gently glows and pulses.
-- The vessel does **not** auto-launch. The player must **click the airplane** to send it. This makes "launching" a deliberate, satisfying action rather than a passive event.
-- Buying bees while the vessel is `ready` can drain the pile and revert to `building`, which is intended — choose between "more bees now" and "launch now."
+- A single boulder dominates the right side of the meadow.
+- Spellcasters (Geomancer, Cantor) damage it; foragers do not.
+- At 0 HP the site flips to `revealing`, the next artifact pends, and on dismiss the next tier (bigger HP) takes its place.
 
 ## Bee state machines
 
-### Forager
+### Forager (unchanged from the prior MVP, with honey-refining at deposit)
 
 ```
-IDLE_AT_HIVE
+IDLE
    ↓ pick a free flower (else wait)
-FLYING_TO_FLOWER (target: flower)
+FLYING_TO_FLOWER
    ↓ arrive
-HARVESTING (3 sec, claims the flower)
-   ↓ flower yield -= 1, bee carrying = 1 pollen
-FLYING_HOME (target: home hive)
+HARVESTING (~3 sec, claims one of the flower's bloom slots)
+   ↓ flower yield -= 1, bee.carrying = pollen × pouchCapacity
+FLYING_HOME
    ↓ arrive
-DEPOSITING (~0.5 sec)
-   ↓ home hive's pollen += 1
-IDLE_AT_HIVE (loop)
+DEPOSIT
+   ↓ state.hive.pollen += carryAmount
+   ↓ refineHoney(state, carryAmount)  // tops up honey up to honeyCap
+IDLE (loop)
 ```
 
-Visual carrying state: bee body has a yellow glow / small pollen sphere attached when carrying.
-
-### Wax-maker
+### Geomancer (one-shot, mana-gated)
 
 ```
-IDLE_AT_HIVE
-   ↓ check: any Forager Hive has pollen?
-FLYING_TO_POLLEN (target: nearest Forager Hive with pollen ≥ 1)
+IDLE
+   ↓ dig site active?
+   ↓ try spendHoney(2)
+        - fail → enter IDLE_SWARM (drift near comb for ~3 sec, retry IDLE)
+        - success → continue
+FLYING_TO_HOVER (climb above the impact point)
    ↓ arrive
-PICKUP (~0.5 sec, decrements that hive's pollen)
-   ↓ carrying = 1 pollen
-FLYING_HOME (target: home Wax Hive)
-   ↓ arrive
-PRODUCING (5 sec inside hive, no movement)
-   ↓ carrying = 1 wax block, hive's wax stockpile += 1 (visually pops out)
-FLYING_TO_VESSEL (target: vessel pad)
-   ↓ arrive
-DROPPING (~0.5 sec)
-   ↓ vessel.deliveredBlocks += 1, hive stockpile -= 1
-FLYING_HOME (loop)
+HOVERING (~380ms bob — anticipation)
+   ↓
+DIVING (180ms straight-down ease-in)
+   ↓ contact: damage dig site, big dust burst
+STRIKING_IMPACT (70ms splat)
+   ↓
+BOUNCING (~360ms tumble outward)
+   ↓
+EXPIRED → cell respawns a fresh geomancer on a cooldown
 ```
 
-If the Wax Hive's stockpile already has one or more blocks, the bee picks up an existing block instead of producing a new one — keeps the stockpile from runaway growth.
+Note the mana check fires at the moment the bee commits to fly — *not* on impact. This avoids the awkward "fly all that way for nothing" pattern and gives immediate feedback (the reservoir drops the instant the bee launches).
 
-Visual carrying state: pollen sphere on the way in; cream-colored hexagonal block on the way to the vessel.
+### Cantor (persistent, mana-gated, hover-cast)
 
-### Idle behavior
+```
+IDLE
+   ↓
+CANTOR_RISING (climb to hover slot above home cell)
+   ↓ arrive
+CANTOR_HOVERING
+   ↓ bob in place; cast timer counts down
+   ↓ when timer hits 0: try spendHoney(1)
+        - fail → enter IDLE_SWARM (retry hovering when swarm timer expires)
+        - success → continue
+   ↓ apply damage to dig site
+   ↓ World.emitSpark(origin → strikePoint)  // cosmetic projectile
+   ↓ optional Mana Sip refund every Nth cast
+CANTOR_CASTING (~160ms recoil pose)
+   ↓
+CANTOR_HOVERING (loop; cast timer reset to cantorCastIntervalMs)
+```
 
-When a bee can't find work (no available flowers / no pollen anywhere), it does a small wandering loop near its home hive — same behavior we have today.
+Cantors never expire — they keep hovering and casting as long as the cell exists.
+
+### Idle swarm (shared)
+
+When any spellcaster can't pay for its next cast, it falls into `idle-swarm`. The shared loop picks a small wander target near the home cell, drifts toward it, occasionally repicks, and exits back to `idle` after `SPELL_IDLE_RETRY_MS` (~3 sec). On exit, the bee retries its mana check. With multiple casters and no foragers, the meadow fills with a visible buzzing cloud near the hive — the "we're out of mana" beat that telegraphs to the player exactly what's wrong.
 
 ## Resource state model (sim)
 
 ```ts
-interface GameState {
-  // ... existing ...
-  resources: {
-    pollen: { perHive: Record<string, number> }; // pollen at each Forager Hive
-    waxBlocks: { perHive: Record<string, number> }; // blocks at each Wax Hive
-  };
-  flowers: FlowerData[]; // moved into sim — yields and timers must persist
-  vessel: {
-    deliveredBlocks: number;
-    requiredBlocks: number;
-    phase: VesselPhase;
-    launchTimer: number;
-  };
-}
-
-interface FlowerData {
+interface HiveData {
   id: string;
-  yieldRemaining: number;
-  regrowTimerMs: number; // 0 = full bloom; counts down while regrowing
-  claimedByBeeId: string | null;
+  pollen: number;     // upgrade currency, uncapped
+  honey: number;      // mana, ≤ honeyCap
+  honeyCap: number;   // default 10; future upgrades may grow it
+  cells: HiveCell[];  // hex cells with optional role assignment
 }
 ```
 
-The world layer's bee/hive entities each get richer state (see state machines above). The `Bee` class gains a behavior state enum, current target, and `carrying` field.
+The `Bee` class gains role-specific fields:
 
-## Buy currency
+- All: `seed`, `flapPhase`, `idleWaitMs`, `consecutiveIdleResets`.
+- Geomancer: `impactX/Y`, `windupX/Y`, `ramDirX/Y`, single-strike timers.
+- Cantor: `castTimerMs`, `castCount`, `hoverX/Y`.
 
-Same as before: **wax blocks** are the meta-currency. Building a hive costs N blocks. The same blocks the player wants to send to the vessel also have to feed colony expansion — a real strategic tension.
+`spendHoney`, `refineHoney`, and `manaCostFor` are pure helpers in `state.ts`.
 
-## Phase 1 starter state (revised MVP)
+## Tuning (current placeholders)
 
-The game loads into a **deliberately empty colony**. Nothing happens until the player acts.
+- Honey cap: **10**.
+- Forager round-trip: ~10 sec/pollen.
+- Geomancer mana cost: 2 honey/cast. Base damage: 1.
+- Cantor mana cost: 1 honey/cast. Base damage: 0.35. Cast interval: 2.4 sec.
+- Idle swarm retry: 2.8 sec.
 
-- **1 empty Forager Hive** on the left (no foragers).
-- **1 empty Wax Hive** on the right (no wax-makers).
-- **8 flowers** scattered across the meadow (default yield 5, regrow 60s).
-- **0 pollen, 0 wax blocks, 0 bees.**
-- **Vessel:** empty pad with a faint airplane outline; requires 8 blocks for first launch.
-- Buy panel offers both bee types, both with first-bee-FREE.
-
-The player's first actions are: build the first forager (free), build the first wax-maker (free). Production begins. Player buys more bees as wax accumulates. When 8 blocks are delivered, the airplane assembles and waits for a click.
-
-## Tuning targets (placeholders)
-
-- Forager round-trip: ~10 sec/pollen (4s out + 3s harvest + 3s back).
-- Wax-maker round-trip: ~17 sec/block (3s to Forager Hive + 0.5 pickup + 3s back + 5s producing + 3s to vessel + 0.5 drop + 3s back).
-- 2 wax-makers cranking: ~1 block / 8.5 sec.
-- 8 blocks for first vessel: ~70 sec minimum if pollen flow keeps up.
-- Pollen production: 3 foragers × (1 pollen / 10 sec) = 0.3 pollen/sec.
-- Wax demand: 2 wax-makers × (1 pollen / 17 sec) ≈ 0.12 pollen/sec.
-- → Pollen surplus by default; foragers will eventually idle. That's fine for the starter — buying a Wax Hive accelerates progress, eventually rebalancing.
-
-Actual numbers will get tuned after first play.
-
-## What this changes from the existing code
-
-- **Sim:** new shape (`pollen.perHive`, `waxBlocks.perHive`, `flowers`, `vessel.deliveredBlocks`), new systems for bee behavior state, removal of `productionSystem` and `constructionSystem` (replaced by behavior triggers).
-- **World:** Bee gets a real state machine; HiveEntity differentiates Forager vs Wax; FlowerEntity gets state.
-- **View:** new visuals for pollen pots, wax stockpile, claimed flower state, carried items, vessel pile.
-- **UI:** resource bar shows pollen + blocks; buy panel offers two hive types; vessel progress shows N/M blocks.
+Roughly: a single Forager → Geomancer + single Cantor pair should chip the tier-1 rock open in a couple of minutes, with the Forager often catching up to the mana drain. Tighten/loosen `HONEY_CAP`, mana costs, and forager throughput in `TUNING` once we've watched real play.

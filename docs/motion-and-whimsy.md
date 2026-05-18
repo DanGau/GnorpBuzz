@@ -1,6 +1,6 @@
 # Motion & Whimsy — GnorpBuzz Animation Guidelines
 
-The bees should feel alive, exaggerated, and silly. The narrative is absurdist — bees building paper airplanes to reach a sky flower — and the motion should match. Robotic, smooth, "professional" animation kills the tone. Cartoony overshoot, comedic delays, and visible personality are the brief.
+The bees should feel alive, exaggerated, and silly. The narrative is absurdist — wizard bees lobbing cantrips at ancient rocks to recover plastic bottle caps and Lego bricks — and the motion should match. Robotic, smooth, "professional" animation kills the tone. Cartoony overshoot, comedic delays, and visible personality are the brief.
 
 This doc is the design north star. Implementation lives in `app/src/world/Bee.ts`, `app/src/view/BeeView.ts`, and a future `app/src/view/Particles.ts` / `app/src/view/Tween.ts`.
 
@@ -110,6 +110,20 @@ The bees should be recognizable by motion alone.
 - 200–300ms pause between every state transition (the "thinking" beat).
 - **Working hum:** slow `breathe` (scale.y up to 1.08) while in `producing-wax` state.
 - Idle behavior: yawn — slow stretch.y to 1.3 over 600ms, hold 200ms, snap back. Random 5–8s timer.
+
+### Cantor — floaty, ceremonial, cantrip-fizzy
+
+- Persistent hover-caster; never travels to the rock. Always bobbing in place above its home cell with a slow sine sway.
+- **Wizard hat.** Tiny pointed indigo cone with a starlit tip — the silhouette readable at a glance.
+- **Cast recoil.** On every spark fired, a brief mid-air kickback (~120ms) — body squashes vertically, hat tilts ~10° back, then settles. Sells "the spell pushed me."
+- **Spark trail.** The cantrip is a small magic-purple star with a soft white halo, traveling on a light-gravity arc to the rock. Three sparks per cast with a tiny angular spread reads as "splat" not "single bullet."
+- **Idle swarm shame.** When the cantor enters idle-swarm (no mana), the hat tilts forward slightly and a "?" pops above its head every few seconds. The crowd of muted cantors waiting for foragers IS the "you're out of mana" beat.
+
+### Geomancer — heavy, deliberate, dive-bombing
+
+- One-shot caster: climb → hover → dive → impact → bounce → expire. Each strike should feel like a *commitment*.
+- Squat red-brown body with a downward "stinger" (the pickaxe metaphor still reads).
+- **Mana check beat.** When the geomancer commits to fly out, the body shudders once (1-frame squash) and the reservoir number visibly ticks down. Tie the two visually with a quick honey-colored puff between the hive and the bee.
 
 ### Builder — rhythmic, focused
 

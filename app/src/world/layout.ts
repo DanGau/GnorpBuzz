@@ -19,7 +19,7 @@ export const WORLD = {
 
   // A massive cracked boulder dominates the RIGHT side of the meadow.
   // Center is the surface-level anchor; the visual draws much bigger than
-  // the hive. Excavators stream from left to right to hit it.
+  // the hive. Geomancers stream from left to right to hit it.
   DIG_SITE: { x: 1050, y: 560 },
   // Visual radius of the boulder — bees orbit around it within this radius
   // when picking a strike point.
@@ -34,6 +34,19 @@ export const WORLD = {
   // Hex cell "size" — the center-to-corner radius. Pointy-top orientation.
   // Small on purpose; see the note on HIVE above.
   HEX_SIZE: 10,
+
+  // Overview camera frame — the world-space rect the zoomed-out view fits
+  // into. Deliberately shorter (top→bottom) than WORLD.HEIGHT: it stops
+  // just below the flower line so the underground band stays hidden until
+  // the player zooms in, and the rect is ~16:9 so a typical widescreen
+  // canvas fills with minimal letterboxing. Tweaking BOTTOM here is the
+  // single knob for "where do the flowers sit on screen in overview."
+  OVERVIEW: {
+    LEFT: 0,
+    RIGHT: 1280,
+    TOP: 0,
+    BOTTOM: 720,
+  },
 
   // Decorative meadow flowers — clustered on the LEFT half of the meadow
   // away from the boulder. Twelve positions so larger colonies have enough
