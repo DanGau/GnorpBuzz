@@ -1,6 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import type { World } from '../world/World';
-import type { Bee } from '../world/Bee';
+import type { Bee, BeeRole } from '../world/Bee';
 import { TIP_DURATION_MS } from '../world/Bee';
 
 interface BeeSprite {
@@ -94,42 +94,6 @@ export class BeeView {
       let windupSquash = 1;
       if (bee.windupRemainingMs > 0) windupSquash = 1.18;
 
-      // Hovering: vertical bob handled by the sim; here we just add a soft
-      // vertical pulse so the body breathes while it lines up the dive.
-      let extraStretchX = 0;
-      let extraStretchY = 0;
-      if (bee.state === 'hovering') {
-        const breathe = Math.sin(bee.workTimer / 60) * 0.04;
-        extraStretchY = breathe;
-      }
-      // Diving: bee stretches VERTICALLY (along the dive direction) and
-      // squashes horizontally — the classic dive-bomb pose.
-      if (bee.state === 'diving') {
-        const dp = Math.max(0, Math.min(1, 1 - bee.workTimer / 180));
-        const mag = 0.55 * dp;
-        extraStretchY = mag;
-        extraStretchX = -0.18 * dp;
-        windupSquash = 1;
-      }
-      // Impact splat: bee flattens against the rock on contact.
-      if (bee.state === 'striking-impact') {
-        const t = Math.max(0, bee.workTimer / 70);
-        const splat = 1 - t;
-        extraStretchY = -0.4 * splat;
-        extraStretchX = 0.35 * splat;
-        windupSquash = 1;
-      }
-      // Bouncing: tumble — bee shrinks and spins out as it arcs away.
-      let bounceRotation = 0;
-      if (bee.state === 'bouncing') {
-        const t = Math.max(0, bee.workTimer / 360);
-        const fadeScale = 0.6 + 0.4 * t; // shrinks slightly as it tumbles
-        extraStretchX = -(1 - fadeScale);
-        extraStretchY = -(1 - fadeScale);
-        bounceRotation = (1 - t) * Math.PI * (bee.seed >= 0 ? 1.8 : -1.8);
-        windupSquash = 1;
-      }
-
       let tipRotation = 0;
       if (bee.tipPhaseMs > 0) {
         const remaining = bee.tipPhaseMs;
@@ -144,13 +108,10 @@ export class BeeView {
         }
       }
 
-      // Strike-impact rotation: tilt forward briefly.
-      if (bee.state === 'striking-impact') tipRotation = 0.4;
-
-      sprite.graphics.rotation = tipRotation + bounceRotation;
+      sprite.graphics.rotation = tipRotation;
       sprite.graphics.scale.set(
-        (1 + stretchX + extraStretchX) * shake,
-        (1 + stretchY + extraStretchY) * flap * windupSquash,
+        (1 + stretchX) * shake,
+        (1 + stretchY) * flap * windupSquash,
       );
       sprite.carry.rotation = 0;
       sprite.carry.scale.set(1, 1);
@@ -159,26 +120,21 @@ export class BeeView {
     }
   }
 
-  private drawBee(g: Graphics, role: 'forager' | 'geomancer' | 'cantor'): void {
+  private drawBee(g: Graphics, role: BeeRole): void {
     g.clear();
     let bodyColor: number;
-    if (role === 'forager') bodyColor = 0xffd23f;
+    if (role === 'honey-worker') bodyColor = 0xf0a040; // warm amber
+    else if (role === 'wax-worker') bodyColor = 0xf0e0a8; // pale cream
     else if (role === 'cantor') bodyColor = 0x9a7adf; // arcane purple
-    else bodyColor = 0xc94a2a;
+    else bodyColor = 0xffd23f; // forager
     g.ellipse(0, 0, 7, 5).fill(bodyColor);
-    // Stripes — black for forager, deeper tints for the spellcasters.
-    let stripeColor: number;
-    if (role === 'forager') stripeColor = 0x222222;
-    else if (role === 'cantor') stripeColor = 0x3a1a78;
-    else stripeColor = 0x501a08;
+    // Stripes — black for the mundane castes, deep purple for the cantor.
+    const stripeColor = role === 'cantor' ? 0x3a1a78 : 0x222222;
     g.rect(-4, -2, 2.5, 4).fill(stripeColor);
     g.rect(1.5, -2, 2.5, 4).fill(stripeColor);
     g.ellipse(-2, -4, 4, 2.5).fill({ color: 0xffffff, alpha: 0.6 });
     g.ellipse(2, -4, 4, 2.5).fill({ color: 0xffffff, alpha: 0.6 });
-    if (role === 'geomancer') {
-      // A tiny stinger jutting downward — the geomancer's "pickaxe".
-      g.poly([0, 4, -2, 8, 2, 8]).fill(0x5a3020).stroke({ color: 0x2a1008, width: 0.8 });
-    } else if (role === 'cantor') {
+    if (role === 'cantor') {
       // Pointy wizard hat sitting on the bee's head.
       g.poly([-2.6, -5, 2.6, -5, 0, -10.5]).fill(0x3a1a78).stroke({ color: 0xfff2cf, width: 0.6, alpha: 0.5 });
       g.circle(0, -10.5, 0.8).fill(0xfff2cf);
@@ -188,7 +144,7 @@ export class BeeView {
   private drawCarry(
     g: Graphics,
     carrying: 'none' | 'pollen',
-    role: 'forager' | 'geomancer' | 'cantor',
+    role: BeeRole,
   ): void {
     void role;
     g.clear();

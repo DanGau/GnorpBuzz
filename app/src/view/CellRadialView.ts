@@ -6,7 +6,7 @@ import {
   mustPlaceForager,
   cellCost,
   nextWorkerCost,
-  totalPollen,
+  totalWax,
 } from '../sim/state';
 import { hexToWorld, WORLD } from '../world/layout';
 import { RadialMenu, type RadialOption } from '../ui/pixi/RadialMenu';
@@ -20,26 +20,19 @@ export interface CellRadialCallbacks {
 // selector that fans option bubbles outward from the selected cell along
 // the cell's outward normal (cell → comb-center).
 
-// Target alpha for the screen-dim overlay when the menu is open.
 const OVERLAY_ALPHA = 0.55;
-// World-space extent for the dim rect — large enough to cover the camera
-// at any zoom level. The camera transform scales this with everything else.
 const OVERLAY_EXTENT = 6000;
 
 export class CellRadialView {
   readonly container: Container;
   private menu: RadialMenu;
   private overlay: Graphics;
-  // Animated alpha that lerps toward `targetOverlayAlpha`.
   private overlayAlpha = 0;
   private targetOverlayAlpha = 0;
 
   constructor(private callbacks: CellRadialCallbacks) {
     this.container = new Container();
 
-    // Screen-dim overlay sits behind the menu, ABOVE everything else in
-    // the world. eventMode='none' so cell/background clicks pass through —
-    // it's a purely visual "focus" cue.
     this.overlay = new Graphics();
     this.overlay
       .rect(-OVERLAY_EXTENT, -OVERLAY_EXTENT, OVERLAY_EXTENT * 2, OVERLAY_EXTENT * 2)
@@ -50,8 +43,10 @@ export class CellRadialView {
 
     this.menu = new RadialMenu({
       hexSize: WORLD.HEX_SIZE,
-      spreadDeg: 100,
-      radiusFactor: 3.0,
+      // Wider spread now that we have 5 worker options — keeps the bubbles
+      // from overlapping at the far end of the fan.
+      spreadDeg: 140,
+      radiusFactor: 3.2,
     });
 
     this.container.addChild(this.overlay, this.menu.container);
@@ -75,7 +70,6 @@ export class CellRadialView {
 
     this.menu.update(dtMs);
 
-    // Frame-rate independent exponential ease toward the overlay's target.
     const a = 1 - Math.pow(0.001, dtMs / 1000);
     this.overlayAlpha += (this.targetOverlayAlpha - this.overlayAlpha) * a;
     this.overlay.alpha = this.overlayAlpha;
@@ -94,7 +88,7 @@ function configureMenu(
   if (!cell) {
     if (isCellBuyable(state.hive, q, r)) {
       const cost = cellCost(q, r);
-      const affordable = totalPollen(state) >= cost;
+      const affordable = totalWax(state) >= cost;
       return [
         {
           id: 'unlock',
@@ -112,10 +106,14 @@ function configureMenu(
 
   if (cell.role === null) {
     const firstOnly = mustPlaceForager(state);
-    const have = totalPollen(state);
+    const have = totalWax(state);
+    const can = (cost: number): boolean => cost === 0 || have >= cost;
+
     const fCost = nextWorkerCost(state, 'forager');
-    const xCost = nextWorkerCost(state, 'geomancer');
+    const hCost = nextWorkerCost(state, 'honey-worker');
+    const wCost = nextWorkerCost(state, 'wax-worker');
     const cCost = nextWorkerCost(state, 'cantor');
+
     const opts: RadialOption[] = [
       {
         id: 'forager',
@@ -123,19 +121,28 @@ function configureMenu(
         detail: costLabel(fCost),
         glyph: '🌼',
         color: 0xe8b04c,
-        enabled: fCost === 0 || have >= fCost,
+        enabled: can(fCost),
         onSelect: () => cb.onAssignCell(q, r, 'forager'),
       },
     ];
     if (!firstOnly) {
       opts.push({
-        id: 'geomancer',
-        title: 'Geomancer',
-        detail: costLabel(xCost),
-        glyph: '⛏',
-        color: 0xc94a2a,
-        enabled: xCost === 0 || have >= xCost,
-        onSelect: () => cb.onAssignCell(q, r, 'geomancer'),
+        id: 'honey-worker',
+        title: 'Honey',
+        detail: costLabel(hCost),
+        glyph: '🍯',
+        color: 0xe89638,
+        enabled: can(hCost),
+        onSelect: () => cb.onAssignCell(q, r, 'honey-worker'),
+      });
+      opts.push({
+        id: 'wax-worker',
+        title: 'Wax',
+        detail: costLabel(wCost),
+        glyph: '🕯',
+        color: 0xe8d8a4,
+        enabled: can(wCost),
+        onSelect: () => cb.onAssignCell(q, r, 'wax-worker'),
       });
       opts.push({
         id: 'cantor',
@@ -143,7 +150,7 @@ function configureMenu(
         detail: costLabel(cCost),
         glyph: '✦',
         color: 0x9a7adf,
-        enabled: cCost === 0 || have >= cCost,
+        enabled: can(cCost),
         onSelect: () => cb.onAssignCell(q, r, 'cantor'),
       });
     }
@@ -154,8 +161,6 @@ function configureMenu(
   return [];
 }
 
-// Outward direction = from comb center to the selected cell. For the very
-// center cell (degenerate), fall back to "up" so the menu fans skyward.
 function outwardDirection(
   q: number,
   r: number,
@@ -166,5 +171,5 @@ function outwardDirection(
 }
 
 function costLabel(cost: number): string {
-  return cost === 0 ? 'FREE' : `${cost}🌼`;
+  return cost === 0 ? 'FREE' : `${cost}🕯`;
 }

@@ -3,10 +3,8 @@
 
 export const WORLD = {
   WIDTH: 1280,
-  // Bumped to make room for an underground cross-section below the meadow
-  // line — see `docs/underground.md`. The overview camera still fits the
-  // whole world; the zoomed-in camera frames hive + underground together.
-  // 1000 leaves soil room below the chamber upgrade panel.
+  // Tall enough to give the meadow-ground buildings and their contextual
+  // upgrade panels room below the hive without the camera clipping.
   HEIGHT: 1000,
 
   // Vertical bands (meadow at bottom, sky middle, stars top).
@@ -19,7 +17,7 @@ export const WORLD = {
 
   // A massive cracked boulder dominates the RIGHT side of the meadow.
   // Center is the surface-level anchor; the visual draws much bigger than
-  // the hive. Geomancers stream from left to right to hit it.
+  // the hive. Cantors fire sparks at it from across the meadow.
   DIG_SITE: { x: 1050, y: 560 },
   // Visual radius of the boulder — bees orbit around it within this radius
   // when picking a strike point.
@@ -34,6 +32,23 @@ export const WORLD = {
   // Hex cell "size" — the center-to-corner radius. Pointy-top orientation.
   // Small on purpose; see the note on HIVE above.
   HEX_SIZE: 10,
+
+  // Above-ground resource containers, arranged left-to-right:
+  //
+  //   POLLEN_SILO  (left, economy)  →  HONEY_JAR (between, on the hive)  →  combat zone (right)
+  //   WAX_BLOCK    (left, economy)
+  //
+  // Foragers deposit at the Pollen Silo; Honey Workers / Wax Workers pull
+  // from the silo and deliver to the Honey Jar / Wax Block. The Honey Jar
+  // is rendered by HoneyBarView and anchored above the hive (see that
+  // file's offsets); only the two ground-level buildings need world coords
+  // here. Bees never touch the comb directly — the comb is just a
+  // population dial.
+  POLLEN_SILO: { x: 110, y: 595 },
+  WAX_BLOCK: { x: 195, y: 605 },
+  // Honey Jar floats above the hive — its visual is owned by HoneyBarView
+  // and bobs ±1px; this is the static reference point for routing logic.
+  HONEY_JAR: { x: 250, y: 450 },
 
   // Overview camera frame — the world-space rect the zoomed-out view fits
   // into. Deliberately shorter (top→bottom) than WORLD.HEIGHT: it stops
@@ -74,34 +89,5 @@ export function hexToWorld(q: number, r: number): { x: number; y: number } {
   return {
     x: WORLD.HIVE.x + s * Math.sqrt(3) * (q + r / 2),
     y: WORLD.HIVE.y + s * 1.5 * r,
-  };
-}
-
-// ---- Underground layout ----
-//
-// A cross-section "soil" layer below the meadow that hosts the chambers.
-// Plots are arranged in horizontal rows; deeper rows host later-phase
-// chambers. The center column aligns horizontally with the hive so the
-// cross-section reads as "underneath the hill".
-export const UNDERGROUND = {
-  TOP_Y: 615,       // top edge of the soil layer (tucked close to the hive)
-  ROW_HEIGHT: 50,   // vertical spacing between rows
-  ROW_X_CENTER: WORLD.HIVE.x,
-  COL_SPACING: 110,
-  CHAMBER_W: 90,
-  CHAMBER_H: 35,    // small footprint so the hive clearly dominates the view
-} as const;
-
-// Plot (row, col) → world position of the chamber's center.
-// Columns are arranged symmetrically around `ROW_X_CENTER`: with two
-// columns, col 0 sits left, col 1 sits right.
-export function chamberWorldPosition(plot: { row: number; col: number }): {
-  x: number;
-  y: number;
-} {
-  const offsetX = (plot.col - 0.5) * UNDERGROUND.COL_SPACING;
-  return {
-    x: UNDERGROUND.ROW_X_CENTER + offsetX,
-    y: UNDERGROUND.TOP_Y + UNDERGROUND.ROW_HEIGHT * (plot.row + 0.5),
   };
 }

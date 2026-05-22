@@ -1,37 +1,33 @@
 import { Container, Graphics, Text, type TextStyleOptions } from 'pixi.js';
-import type { GameState, UpgradeId } from '../sim/state';
+import type { GameState, UpgradeId, UpgradeRole } from '../sim/state';
 import {
-  chamberSpec,
   describeUpgradeEffect,
-  isChamberBuilt,
-  totalPollen,
+  upgradesForRole,
+  totalWax,
   UPGRADE_DEFS,
   getUpgradeTier,
   isUpgradeUnlocked,
   nextUpgradeCost,
 } from '../sim/state';
-import { UNDERGROUND, chamberWorldPosition } from '../world/layout';
 
-// Upgrade panel for a selected built chamber. Deliberately NOT a hex
-// radial — the cell-buy interaction already owns that vocabulary. This is
-// a wooden notice-board nailed to the chamber wall: a vertical column of
-// upgrade rows, each with a glyph, name, tier pips, and a cost button.
+// Contextual upgrade panel anchored to a world object. Clicking a resource
+// building opens this panel showing that role's upgrades:
+//   Pollen Silo  → forager
+//   Honey Jar    → cantor
+//   Wax Block    → wax-worker
 //
-// Lives in world space, anchored to the right of the selected chamber so
-// the chamber's interior animation stays visible while the panel is open.
+// A wooden notice-board: a vertical column of upgrade rows, each with a
+// glyph, name, tier pips, and a wax cost button. Lives in world space,
+// anchored just below the clicked object. (This replaces the old
+// underground ChamberRadialView — same visual vocabulary, no dig gate.)
 
-export interface ChamberUpgradePanelCallbacks {
-  // Kept on the interface even though one-click dig handles the unbuilt
-  // case directly in UndergroundView — leaving the hook lets future
-  // "dig from inside the panel" paths slot in without an API change.
-  onDigChamber: (id: string) => void;
+export interface UpgradePanelCallbacks {
   onBuyUpgrade: (id: UpgradeId) => void;
-  // Click outside the panel (on the dim backdrop) closes the panel.
-  // Standard modal-dismiss pattern.
+  // Click outside the panel (on the dim backdrop) closes it.
   onDismissBackdrop: () => void;
 }
 
-const OVERLAY_ALPHA = 0.55;
+const OVERLAY_ALPHA = 0.5;
 const OVERLAY_EXTENT = 6000;
 
 const PANEL_W = 120;
@@ -40,6 +36,18 @@ const ROW_GAP = 2;
 const PANEL_PAD = 5;
 const HEADER_H = 12;
 const TEXT_SUPERSAMPLE = 6;
+
+const ROLE_LABEL: Record<UpgradeRole, string> = {
+  forager: 'Forager',
+  cantor: 'Cantor',
+  'wax-worker': 'Wax Worker',
+};
+
+const ROLE_GLYPH: Record<UpgradeRole, string> = {
+  forager: '🌼',
+  cantor: '✦',
+  'wax-worker': '🕯',
+};
 
 interface RowSprites {
   upgradeId: UpgradeId;
@@ -56,18 +64,16 @@ interface RowSprites {
 }
 
 interface PanelSprites {
-  chamberId: string;
+  role: UpgradeRole;
   container: Container;
   plaque: Graphics;
   header: Text;
   rows: RowSprites[];
 }
 
-// Tooltip dimensions in world units. Sized to comfortably hold a name + a
-// two-line description + a current/next effect pair without wrapping.
 const TT_W = 150;
 const TT_PAD = 6;
-const TT_GAP = 6; // horizontal gap from the panel edge
+const TT_GAP = 6;
 
 interface TooltipSprites {
   container: Container;
@@ -81,7 +87,7 @@ interface TooltipSprites {
   caret: Graphics;
 }
 
-export class ChamberRadialView {
+export class UpgradePanelView {
   readonly container: Container;
   private panelLayer: Container;
   private overlay: Graphics;
@@ -89,27 +95,21 @@ export class ChamberRadialView {
   private targetOverlayAlpha = 0;
   private currentPanel: PanelSprites | null = null;
   private animMs = 0;
-  // Tracked separately from animMs so we can animate close as the inverse
-  // of open without restarting the timer.
   private animState: 'closed' | 'opening' | 'open' | 'closing' = 'closed';
-  // Live hover tooltip — at most one upgrade row is hovered at a time.
   private tooltip: TooltipSprites | null = null;
   private hoveredUpgrade: UpgradeId | null = null;
-  // Fade-in/out targets, eased per frame.
   private tooltipAlpha = 0;
   private targetTooltipAlpha = 0;
+  // Anchor world position of the currently-open panel's object.
+  private anchor: { x: number; y: number } = { x: 0, y: 0 };
 
-  constructor(private callbacks: ChamberUpgradePanelCallbacks) {
+  constructor(private callbacks: UpgradePanelCallbacks) {
     this.container = new Container();
 
     this.overlay = new Graphics();
     this.overlay
       .rect(-OVERLAY_EXTENT, -OVERLAY_EXTENT, OVERLAY_EXTENT * 2, OVERLAY_EXTENT * 2)
       .fill({ color: 0x000000, alpha: 1 });
-    // Backdrop dismiss: clicks on the dim overlay close the panel. The
-    // panelLayer sits ABOVE the overlay in z-order, so panel-internal
-    // clicks (rows, buttons) are caught by the panel first and don't
-    // bubble to the overlay.
     this.overlay.eventMode = 'static';
     this.overlay.cursor = 'default';
     this.overlay.on('pointertap', (e) => {
@@ -125,24 +125,19 @@ export class ChamberRadialView {
     this.container.addChild(this.overlay, this.panelLayer);
   }
 
-  // Visible world rect set by the renderer each frame. Used by the
-  // tooltip to decide which side to fan to without clipping off-screen.
-  private viewportWorld: { left: number; right: number; top: number; bottom: number } = {
-    left: 0,
-    right: 1280,
-    top: 0,
-    bottom: 1000,
-  };
+  private viewportWorld = { left: 0, right: 1280, top: 0, bottom: 1000 };
 
   update(
     state: GameState,
-    selectedChamber: string | null,
+    selectedRole: UpgradeRole | null,
+    anchor: { x: number; y: number } | null,
     dtMs: number,
     viewportWorld?: { left: number; right: number; top: number; bottom: number },
   ): void {
     if (viewportWorld) this.viewportWorld = viewportWorld;
-    // Drive open/close target.
-    if (!selectedChamber || !isChamberBuilt(state, selectedChamber)) {
+    if (anchor) this.anchor = anchor;
+
+    if (!selectedRole) {
       this.targetOverlayAlpha = 0;
       if (this.animState === 'open' || this.animState === 'opening') {
         this.animState = 'closing';
@@ -150,8 +145,8 @@ export class ChamberRadialView {
       }
     } else {
       this.targetOverlayAlpha = OVERLAY_ALPHA;
-      if (this.currentPanel?.chamberId !== selectedChamber) {
-        this.rebuildPanel(state, selectedChamber);
+      if (this.currentPanel?.role !== selectedRole) {
+        this.rebuildPanel(state, selectedRole);
         this.animState = 'opening';
         this.animMs = 0;
       } else {
@@ -163,7 +158,6 @@ export class ChamberRadialView {
       }
     }
 
-    // Animate open/close: a 200ms scale + alpha pop.
     if (this.animState !== 'closed') {
       this.animMs = Math.min(200, this.animMs + dtMs);
       const t = this.animMs / 200;
@@ -184,15 +178,11 @@ export class ChamberRadialView {
       }
     }
 
-    // Overlay alpha ease.
     const a = 1 - Math.pow(0.001, dtMs / 1000);
     this.overlayAlpha += (this.targetOverlayAlpha - this.overlayAlpha) * a;
     this.overlay.alpha = this.overlayAlpha;
     this.overlay.visible = this.overlayAlpha > 0.005;
 
-    // Tooltip fade. Visibility/contents are driven by hover state set in
-    // createRow's pointerover/pointerout handlers; here we just ease alpha
-    // toward the target so it doesn't pop on hover.
     if (this.hoveredUpgrade !== null && this.currentPanel) {
       this.refreshTooltip(state);
       this.targetTooltipAlpha = 1;
@@ -207,33 +197,27 @@ export class ChamberRadialView {
     }
   }
 
-  private rebuildPanel(state: GameState, chamberId: string): void {
+  private rebuildPanel(state: GameState, role: UpgradeRole): void {
     this.destroyPanel();
-    const spec = chamberSpec(chamberId);
-    if (!spec) return;
-    const chamberPos = chamberWorldPosition(spec.plot);
-    // Anchor the panel directly below the chamber. This keeps the chamber's
-    // interior animation visible above, and avoids horizontally overlapping
-    // sibling chambers — the panel is wider than a chamber and would cover
-    // its neighbors if placed to the side.
-    const anchorX = chamberPos.x - PANEL_W / 2;
-    const anchorY = chamberPos.y + UNDERGROUND.CHAMBER_H / 2 + 10;
+    const upgrades = upgradesForRole(role);
+    // Anchor the panel just below the clicked object, centered on it.
+    const anchorX = this.anchor.x - PANEL_W / 2;
+    const anchorY = this.anchor.y + 26;
 
     const container = new Container();
     container.x = anchorX + PANEL_W / 2;
     container.y = anchorY;
-    // Scale-in pivot is the top center (where the panel "drops" from).
     container.pivot.set(PANEL_W / 2, 0);
 
     const rows: RowSprites[] = [];
     const totalH =
-      PANEL_PAD * 2 + HEADER_H + spec.upgradeIds.length * (ROW_H + ROW_GAP) - ROW_GAP;
+      PANEL_PAD * 2 + HEADER_H + upgrades.length * (ROW_H + ROW_GAP) - ROW_GAP;
 
     const plaque = new Graphics();
     drawPlaque(plaque, PANEL_W, totalH);
     container.addChild(plaque);
 
-    const header = makeCrispText(spec.name, {
+    const header = makeCrispText(`${ROLE_GLYPH[role]} ${ROLE_LABEL[role]}`, {
       fontFamily: 'system-ui, sans-serif',
       fontSize: 7 * TEXT_SUPERSAMPLE,
       fontWeight: '800',
@@ -246,8 +230,8 @@ export class ChamberRadialView {
     container.addChild(header);
 
     let y = PANEL_PAD + HEADER_H;
-    for (const upgradeId of spec.upgradeIds) {
-      const row = this.createRow(upgradeId, PANEL_W - PANEL_PAD * 2);
+    for (const def of upgrades) {
+      const row = this.createRow(def.id, PANEL_W - PANEL_PAD * 2);
       row.container.x = PANEL_PAD;
       row.container.y = y;
       container.addChild(row.container);
@@ -256,7 +240,7 @@ export class ChamberRadialView {
     }
 
     this.panelLayer.addChild(container);
-    this.currentPanel = { chamberId, container, plaque, header, rows };
+    this.currentPanel = { role, container, plaque, header, rows };
     this.refreshPanel(state);
     this.ensureTooltip();
   }
@@ -264,7 +248,7 @@ export class ChamberRadialView {
   private refreshPanel(state: GameState): void {
     const panel = this.currentPanel;
     if (!panel) return;
-    const have = totalPollen(state);
+    const have = totalWax(state);
     for (const row of panel.rows) {
       const def = UPGRADE_DEFS[row.upgradeId];
       const tier = getUpgradeTier(state, row.upgradeId);
@@ -279,7 +263,7 @@ export class ChamberRadialView {
       row.onSelect = () => this.callbacks.onBuyUpgrade(row.upgradeId);
       row.name.text = def.name;
       this.drawRowPips(row.pips, tier, def.maxTier, PANEL_W - PANEL_PAD * 2);
-      const btnText = maxed ? 'MAX' : `${cost}🌼`;
+      const btnText = maxed ? 'MAX' : `${cost}🕯`;
       row.buttonText.text = btnText;
       drawRowButton(row.button, enabled);
       const dimColor = enabled ? 0xfff2cf : 0x8a7a4a;
@@ -296,9 +280,7 @@ export class ChamberRadialView {
     c.eventMode = 'static';
     const body = new Graphics();
     drawRowBg(body, rowW, ROW_H);
-    const glyph = makeCrispText(
-      def.role === 'forager' ? '🌼' : def.role === 'cantor' ? '✦' : '⛏',
-      {
+    const glyph = makeCrispText(ROLE_GLYPH[def.role], {
       fontFamily: 'system-ui, sans-serif',
       fontSize: 8 * TEXT_SUPERSAMPLE,
       fontWeight: '700',
@@ -388,8 +370,6 @@ export class ChamberRadialView {
     this.hoveredUpgrade = null;
   }
 
-  // Build the tooltip sprite once per panel. Its position + text content
-  // are refreshed live every frame the hover stays in place.
   private ensureTooltip(): void {
     if (this.tooltip) return;
     if (!this.currentPanel) return;
@@ -400,72 +380,32 @@ export class ChamberRadialView {
     const plaque = new Graphics();
     container.addChild(plaque);
 
-    const title = makeCrispText('', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: 7 * TEXT_SUPERSAMPLE,
-      fontWeight: '800',
-      fill: 0xfff2cf,
-      align: 'left',
-    });
-    title.anchor.set(0, 0);
-    container.addChild(title);
+    const mk = (
+      size: number,
+      weight: TextStyleOptions['fontWeight'],
+      fill: number,
+      wrap = false,
+    ): Text =>
+      makeCrispText('', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: size * TEXT_SUPERSAMPLE,
+        fontWeight: weight,
+        fill,
+        align: 'left',
+        wordWrap: wrap,
+        wordWrapWidth: (TT_W - TT_PAD * 2) * TEXT_SUPERSAMPLE,
+      });
 
-    const subtitle = makeCrispText('', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: 5 * TEXT_SUPERSAMPLE,
-      fontWeight: '700',
-      fill: 0xf5d166,
-      align: 'left',
-    });
-    subtitle.anchor.set(0, 0);
-    container.addChild(subtitle);
-
-    const blurb = makeCrispText('', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: 5 * TEXT_SUPERSAMPLE,
-      fontWeight: '500',
-      fill: 0xcfc6a8,
-      align: 'left',
-      wordWrap: true,
-      wordWrapWidth: (TT_W - TT_PAD * 2) * TEXT_SUPERSAMPLE,
-    });
-    blurb.anchor.set(0, 0);
-    container.addChild(blurb);
-
-    const current = makeCrispText('', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: 5 * TEXT_SUPERSAMPLE,
-      fontWeight: '600',
-      fill: 0xfff2cf,
-      align: 'left',
-      wordWrap: true,
-      wordWrapWidth: (TT_W - TT_PAD * 2) * TEXT_SUPERSAMPLE,
-    });
-    current.anchor.set(0, 0);
-    container.addChild(current);
-
-    const next = makeCrispText('', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: 5 * TEXT_SUPERSAMPLE,
-      fontWeight: '700',
-      fill: 0xa0e0a0,
-      align: 'left',
-      wordWrap: true,
-      wordWrapWidth: (TT_W - TT_PAD * 2) * TEXT_SUPERSAMPLE,
-    });
-    next.anchor.set(0, 0);
-    container.addChild(next);
-
-    const cost = makeCrispText('', {
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: 5 * TEXT_SUPERSAMPLE,
-      fontWeight: '800',
-      fill: 0xfff2cf,
-      align: 'left',
-    });
-    cost.anchor.set(0, 0);
-    container.addChild(cost);
-
+    const title = mk(7, '800', 0xfff2cf);
+    const subtitle = mk(5, '700', 0xf5d166);
+    const blurb = mk(5, '500', 0xcfc6a8, true);
+    const current = mk(5, '600', 0xfff2cf, true);
+    const next = mk(5, '700', 0xa0e0a0, true);
+    const cost = mk(5, '800', 0xfff2cf);
+    for (const t of [title, subtitle, blurb, current, next, cost]) {
+      t.anchor.set(0, 0);
+      container.addChild(t);
+    }
     const caret = new Graphics();
     container.addChild(caret);
 
@@ -480,9 +420,6 @@ export class ChamberRadialView {
     this.tooltip = null;
   }
 
-  // Update tooltip text + position to point at the currently hovered row.
-  // Re-laid-out every frame the hover stays in place (cheap; just text
-  // assignment + a single rect redraw).
   private refreshTooltip(state: GameState): void {
     if (!this.tooltip || !this.currentPanel) return;
     const upgradeId = this.hoveredUpgrade;
@@ -490,8 +427,7 @@ export class ChamberRadialView {
     const def = UPGRADE_DEFS[upgradeId];
     const tier = getUpgradeTier(state, upgradeId);
     const maxed = tier >= def.maxTier;
-    const unlocked = isUpgradeUnlocked(state, upgradeId);
-    const have = totalPollen(state);
+    const have = totalWax(state);
     const upcost = maxed ? 0 : nextUpgradeCost(state, upgradeId);
     const summary = describeUpgradeEffect(state, upgradeId);
 
@@ -506,27 +442,17 @@ export class ChamberRadialView {
       this.tooltip.next.style.fill = 0x8a7a4a;
     } else {
       this.tooltip.next.text = `Next: ${summary.nextLabel ?? ''}`;
-      this.tooltip.next.style.fill = unlocked && have >= upcost ? 0xa0e0a0 : 0xe0a070;
+      this.tooltip.next.style.fill = have >= upcost ? 0xa0e0a0 : 0xe0a070;
     }
     this.tooltip.cost.text = maxed
       ? ''
-      : !unlocked
-        ? 'Locked — dig the parent chamber first.'
-        : have >= upcost
-          ? `Cost: ${upcost}🌼  ✓ affordable`
-          : `Cost: ${upcost}🌼  (need ${upcost - have} more)`;
+      : have >= upcost
+        ? `Cost: ${upcost}🕯  ✓ affordable`
+        : `Cost: ${upcost}🕯  (need ${upcost - have} more)`;
     if (!maxed) {
-      this.tooltip.cost.style.fill = !unlocked
-        ? 0xe06a4a
-        : have >= upcost
-          ? 0xa0e0a0
-          : 0xe0a070;
+      this.tooltip.cost.style.fill = have >= upcost ? 0xa0e0a0 : 0xe0a070;
     }
 
-    // Position tooltip beside the hovered row. The row coordinates are
-    // local to the panel container; convert to panelLayer space using the
-    // panel's anchor so the tooltip lines up under the panel's eased
-    // open animation.
     const row = this.currentPanel.rows.find((r) => r.upgradeId === upgradeId);
     if (!row) return;
     const panelC = this.currentPanel.container;
@@ -535,9 +461,6 @@ export class ChamberRadialView {
       y: panelC.y - panelC.pivot.y + row.container.y + ROW_H / 2,
     };
 
-    // Lay out the text vertically within the tooltip card and compute the
-    // total height so we can size the plaque to fit.
-    const innerW = TT_W - TT_PAD * 2;
     let y = TT_PAD;
     this.tooltip.title.x = TT_PAD;
     this.tooltip.title.y = y;
@@ -561,24 +484,13 @@ export class ChamberRadialView {
     }
     const totalH = y + TT_PAD;
 
-    // Draw the plaque background sized to fit.
     const g = this.tooltip.plaque;
     g.clear();
     g.roundRect(-2, -2, TT_W + 4, totalH + 4, 7).fill({ color: 0x1a1408, alpha: 0.95 });
     g.roundRect(0, 0, TT_W, totalH, 5).fill(0x3a2510);
-    g.roundRect(0, 0, TT_W, totalH, 5)
-      .stroke({ color: 0xf5d166, width: 1, alpha: 0.45 });
-    // Top-edge highlight for the wood-plank look.
+    g.roundRect(0, 0, TT_W, totalH, 5).stroke({ color: 0xf5d166, width: 1, alpha: 0.45 });
     g.rect(2, 2, TT_W - 4, 1).fill({ color: 0xc8a878, alpha: 0.55 });
 
-    void innerW;
-
-    // Side selection: pick whichever side of the panel has more visible
-    // room for the tooltip. `viewportWorld` is the live camera viewport
-    // in world units, so this is correct under any zoom (overview, hive,
-    // chamber-focused). Each candidate position is the tooltip's left
-    // edge if drawn on that side; we measure how much of the tooltip
-    // would actually fit inside the viewport.
     const halfPanelInner = (PANEL_W - PANEL_PAD * 2) / 2;
     const rightX = rowMidWorld.x + halfPanelInner + TT_GAP;
     const leftX = rowMidWorld.x - halfPanelInner - TT_GAP - TT_W;
@@ -586,14 +498,8 @@ export class ChamberRadialView {
     const fitsLeft = leftX >= this.viewportWorld.left;
     const rightOverflow = Math.max(0, rightX + TT_W - this.viewportWorld.right);
     const leftOverflow = Math.max(0, this.viewportWorld.left - leftX);
-    // If both sides fit, prefer right (matches the previous default).
-    // Otherwise pick the side with less overflow.
     const useRight = fitsRight || (!fitsLeft && rightOverflow <= leftOverflow);
     let tx = useRight ? rightX : leftX;
-    // Final defensive clamp: if even the chosen side still overflows the
-    // viewport (e.g. the row sits right at the edge under deep zoom),
-    // shove the tooltip inward so it stays visible. The caret is hidden
-    // in this fallback because it would no longer line up.
     let caretSuppressed = false;
     if (tx + TT_W > this.viewportWorld.right) {
       tx = this.viewportWorld.right - TT_W - 4;
@@ -603,29 +509,20 @@ export class ChamberRadialView {
       tx = this.viewportWorld.left + 4;
       caretSuppressed = true;
     }
-    // Same logic for vertical: keep the tooltip on-screen even when the
-    // hovered row is near the viewport's top or bottom edge.
     let ty = rowMidWorld.y - totalH / 2;
-    if (ty + totalH > this.viewportWorld.bottom) {
-      ty = this.viewportWorld.bottom - totalH - 4;
-    }
-    if (ty < this.viewportWorld.top) {
-      ty = this.viewportWorld.top + 4;
-    }
+    if (ty + totalH > this.viewportWorld.bottom) ty = this.viewportWorld.bottom - totalH - 4;
+    if (ty < this.viewportWorld.top) ty = this.viewportWorld.top + 4;
     this.tooltip.container.x = tx;
     this.tooltip.container.y = ty;
 
-    // Caret pointing back at the row. Hidden when the tooltip had to be
-    // clamped inward — the caret would point at empty space, not the row.
     const caret = this.tooltip.caret;
     caret.clear();
     if (caretSuppressed) {
-      // no-op
+      // no caret
     } else if (useRight) {
       caret.poly([0, totalH / 2 - 6, -6, totalH / 2, 0, totalH / 2 + 6])
         .fill({ color: 0x1a1408, alpha: 0.95 });
-      caret.poly([0, totalH / 2 - 4, -4, totalH / 2, 0, totalH / 2 + 4])
-        .fill(0x3a2510);
+      caret.poly([0, totalH / 2 - 4, -4, totalH / 2, 0, totalH / 2 + 4]).fill(0x3a2510);
     } else {
       caret.poly([TT_W, totalH / 2 - 6, TT_W + 6, totalH / 2, TT_W, totalH / 2 + 6])
         .fill({ color: 0x1a1408, alpha: 0.95 });
@@ -636,14 +533,11 @@ export class ChamberRadialView {
 }
 
 function drawPlaque(g: Graphics, w: number, h: number): void {
-  // Wooden plank background — dark frame, warm wood inner, two "nails".
   g.clear();
   g.roundRect(-2, -2, w + 4, h + 4, 5).fill({ color: 0x1a1408, alpha: 0.95 });
   g.roundRect(0, 0, w, h, 4).fill(0x6a4a22);
-  // Nails — small bright circles in the top corners.
   g.circle(5, 5, 1.3).fill(0xa89878).stroke({ color: 0x3a2a18, width: 0.4 });
   g.circle(w - 5, 5, 1.3).fill(0xa89878).stroke({ color: 0x3a2a18, width: 0.4 });
-  // Border highlight along the top to read as lit from above.
   g.rect(1.5, 1.5, w - 3, 1).fill({ color: 0xc8a878, alpha: 0.6 });
 }
 

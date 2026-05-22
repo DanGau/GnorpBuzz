@@ -1,8 +1,9 @@
 import { Application, Container, Ticker } from 'pixi.js';
-import type { GameState, CellRole } from '../sim/state';
+import type { GameState, CellRole, UpgradeRole } from '../sim/state';
 import {
   createInitialState,
   totalPollen,
+  totalWax,
   totalHoney,
   honeyCap,
   totalBees,
@@ -20,7 +21,6 @@ import {
   dismissArtifact,
   buyUpgrade,
   damageDigSite,
-  digChamber,
 } from '../sim/actions';
 import type { UpgradeId } from '../sim/state';
 import type { ActionResult } from '../sim/actions';
@@ -34,20 +34,28 @@ export interface GameSnapshot {
   tick: number;
   elapsedMs: number;
   paused: boolean;
+  // Sum of pollen dots sitting on all Forager cell piles — the transient
+  // buffer between gatherers and refiners.
   pollen: number;
+  // Wax — the upgrade currency. Refined by Wax Workers.
+  wax: number;
   honey: number;
   honeyCap: number;
   cells: { q: number; r: number; role: string | null }[];
+  pollenCap: number;
+  waxCap: number;
   totalBees: number;
   foragers: number;
-  geomancers: number;
+  honeyWorkers: number;
+  waxWorkers: number;
   cantors: number;
   digSite: { tier: number; hp: number; maxHp: number; state: string; hpPct: number };
   artifacts: { revealed: string[]; pending: string | null };
   journal: { pending: boolean; entries: number };
   ascent: { phase: string; timer: number };
   nextForagerCost: number;
-  nextGeomancerCost: number;
+  nextHoneyWorkerCost: number;
+  nextWaxWorkerCost: number;
   nextCantorCost: number;
 }
 
@@ -60,15 +68,14 @@ export class Game {
   readonly renderer: WorldRenderer;
   ui?: UI;
 
-  // UI selection. `selectedId` covers the dig site ('dig-site' or null);
-  // `selectedCell` is the hex cell the player has open in the cell panel;
-  // `selectedChamber` is the underground chamber spec id with its radial
-  // open. The three are mutually exclusive in practice — opening one closes
-  // the others — but `selectedId` may be 'hive' while a chamber is open
-  // so the camera stays in the zoomed-in framing.
+  // UI selection. `selectedId` covers the dig site ('dig-site'), the whole
+  // hive ('hive'), or null; `selectedCell` is the hex cell open in the cell
+  // panel; `selectedUpgrades` is the role whose contextual upgrade panel is
+  // open (set by clicking the Pollen Silo / Honey Jar / Wax Block / rune
+  // stone). These are mutually exclusive — opening one closes the others.
   selectedId: string | null = null;
   selectedCell: { q: number; r: number } | null = null;
-  selectedChamber: string | null = null;
+  selectedUpgrades: UpgradeRole | null = null;
 
   private paused = false;
   private skipRendering = false;
@@ -88,9 +95,8 @@ export class Game {
       onBackgroundClick: () => this.stepOutSelection(),
       onBuyCell: (q: number, r: number) => this.buyCell(q, r),
       onAssignCell: (q: number, r: number, role: CellRole) => this.assignCell(q, r, role),
-      onChamberClick: (id: string) => this.toggleChamber(id),
-      onDigChamber: (id: string) => this.digChamber(id),
       onBuyUpgrade: (id: UpgradeId) => this.buyUpgrade(id),
+      onShowUpgrades: (role: UpgradeRole) => this.toggleUpgrades(role),
     });
     this.world.reconcile(this.state);
   }
@@ -104,12 +110,12 @@ export class Game {
     if (
       this.selectedId === id &&
       this.selectedCell === null &&
-      this.selectedChamber === null
+      this.selectedUpgrades === null
     )
       return;
     this.selectedId = id;
     this.selectedCell = null;
-    this.selectedChamber = null;
+    this.selectedUpgrades = null;
     this.notify();
   }
 
@@ -120,7 +126,7 @@ export class Game {
   selectCell(q: number, r: number): void {
     this.selectedCell = { q, r };
     this.selectedId = null;
-    this.selectedChamber = null;
+    this.selectedUpgrades = null;
     this.notify();
   }
 
@@ -134,44 +140,38 @@ export class Game {
     }
   }
 
-  selectChamber(id: string | null): void {
-    if (this.selectedChamber === id && id !== null) return;
-    this.selectedChamber = id;
-    // Keep the camera in zoomed-in framing while a chamber is open.
+  // Open the contextual upgrade panel for a role (clicking a resource
+  // building). The camera pans to frame that role's anchor.
+  selectUpgrades(role: UpgradeRole | null): void {
+    this.selectedUpgrades = role;
     this.selectedCell = null;
-    this.selectedId = id ? 'hive' : this.selectedId;
+    this.selectedId = null;
     this.notify();
   }
 
-  toggleChamber(id: string): void {
-    if (this.selectedChamber === id) {
-      // Closing a chamber's radial falls back to whole-hive — same rule as
-      // closing a cell's radial. Camera stays zoomed in.
-      this.select('hive');
-    } else {
-      this.selectChamber(id);
-    }
+  toggleUpgrades(role: UpgradeRole): void {
+    this.selectUpgrades(this.selectedUpgrades === role ? null : role);
   }
 
   clearSelection(): void {
     if (
       this.selectedId === null &&
       this.selectedCell === null &&
-      this.selectedChamber === null
+      this.selectedUpgrades === null
     )
       return;
     this.selectedId = null;
     this.selectedCell = null;
-    this.selectedChamber = null;
+    this.selectedUpgrades = null;
     this.notify();
   }
 
-  // Step out one selection layer: a click outside the radial menu closes it
-  // (cell/chamber → hive), but a second click is needed to leave the
-  // zoomed-in hive (hive → overview). Prevents one stray click from
-  // rocketing the camera out from under the player.
+  // Step out one selection layer: a click outside an open panel closes it
+  // (cell → hive), but a second click is needed to leave the zoomed-in
+  // hive (hive → overview). An open upgrade panel closes straight to the
+  // overview since its camera isn't a sub-view of the hive.
   stepOutSelection(): void {
-    if (this.selectedCell !== null || this.selectedChamber !== null) {
+    if (this.selectedCell !== null) {
       this.select('hive');
     } else {
       this.clearSelection();
@@ -182,7 +182,7 @@ export class Game {
   get isZoomedIn(): boolean {
     return (
       this.selectedCell !== null ||
-      this.selectedChamber !== null ||
+      this.selectedUpgrades !== null ||
       this.selectedId === 'hive'
     );
   }
@@ -217,7 +217,7 @@ export class Game {
     artifactSystem(this.state);
     ascentSystem(this.state, dtMs);
     this.lastDeltaMs = dtMs;
-    this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell, this.selectedChamber);
+    this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell, this.selectedUpgrades);
     if (this.ui) this.ui.update();
   }
 
@@ -250,12 +250,20 @@ export class Game {
       elapsedMs: this.state.elapsedMs,
       paused: this.paused,
       pollen: totalPollen(this.state),
+      wax: totalWax(this.state),
       honey: totalHoney(this.state),
       honeyCap: honeyCap(this.state),
-      cells: this.state.hive.cells.map((c) => ({ q: c.q, r: c.r, role: c.role })),
+      cells: this.state.hive.cells.map((c) => ({
+        q: c.q,
+        r: c.r,
+        role: c.role,
+      })),
+      pollenCap: this.state.hive.pollenCap,
+      waxCap: this.state.hive.waxCap,
       totalBees: totalBees(this.state),
       foragers: countRole(this.state, 'forager'),
-      geomancers: countRole(this.state, 'geomancer'),
+      honeyWorkers: countRole(this.state, 'honey-worker'),
+      waxWorkers: countRole(this.state, 'wax-worker'),
       cantors: countRole(this.state, 'cantor'),
       digSite: {
         tier: this.state.digSite.tier,
@@ -274,7 +282,8 @@ export class Game {
       },
       ascent: { phase: this.state.ascent.phase, timer: this.state.ascent.timer },
       nextForagerCost: nextWorkerCost(this.state, 'forager'),
-      nextGeomancerCost: nextWorkerCost(this.state, 'geomancer'),
+      nextHoneyWorkerCost: nextWorkerCost(this.state, 'honey-worker'),
+      nextWaxWorkerCost: nextWorkerCost(this.state, 'wax-worker'),
       nextCantorCost: nextWorkerCost(this.state, 'cantor'),
     };
   }
@@ -288,7 +297,7 @@ export class Game {
   render(): void {
     if (this.skipRendering) return;
     this.world.reconcile(this.state);
-    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedId, this.selectedCell, this.selectedChamber);
+    this.renderer.update(this.state, this.world, this.lastDeltaMs, this.selectedId, this.selectedCell, this.selectedUpgrades);
     this.app.renderer.render(this.app.stage);
   }
 
@@ -325,14 +334,6 @@ export class Game {
     return this.commit(buyUpgrade(this.state, id));
   }
 
-  digChamber(id: string): ActionResult {
-    const result = this.commit(digChamber(this.state, id));
-    // After a successful dig, keep the chamber selected so the radial
-    // refreshes to show the now-available upgrade options.
-    if (result.ok) this.selectChamber(id);
-    return result;
-  }
-
   dismissJournal(): ActionResult {
     return this.commit(dismissArtifact(this.state));
   }
@@ -342,7 +343,7 @@ export class Game {
     this.state = createInitialState();
     this.selectedId = null;
     this.selectedCell = null;
-    this.selectedChamber = null;
+    this.selectedUpgrades = null;
     this.world.reconcile(this.state);
     this.notify();
   }
@@ -361,8 +362,20 @@ export class Game {
       buyUpgrade: (id: UpgradeId) => this.buyUpgrade(id),
       dismissJournal: () => this.dismissJournal(),
       damageDigSite: (amount: number) => this.commit(damageDigSite(this.state, amount)),
+      grantWax: (amount: number) => {
+        this.state.hive.wax += amount;
+        saveToStorage(this.state);
+        this.notify();
+        return { ok: true };
+      },
+      // Grant pollen directly to the silo (clamped to cap). Useful for sim
+      // tests that want to stress-test the Worker pickup loop without
+      // waiting for foragers to fly out and back.
       grantPollen: (amount: number) => {
-        this.state.hive.pollen += amount;
+        this.state.hive.pollen = Math.min(
+          this.state.hive.pollenCap,
+          this.state.hive.pollen + amount,
+        );
         saveToStorage(this.state);
         this.notify();
         return { ok: true };
@@ -377,14 +390,13 @@ export class Game {
         return { ok: true };
       },
       worldBees: () => {
-        const result: { q: number; r: number; role: string; alive: number; respawning: number }[] = [];
+        const result: { q: number; r: number; role: string; alive: number }[] = [];
         for (const cell of this.world.hive.cells.values()) {
           result.push({
             q: cell.q,
             r: cell.r,
             role: cell.role,
             alive: cell.bees.length,
-            respawning: cell.respawnQueue.length,
           });
         }
         return result;
@@ -415,12 +427,10 @@ export class Game {
       worldSnapshot: () => this.world.snapshot(),
       select: (id: string | null) => this.select(id),
       selectCell: (q: number, r: number) => this.selectCell(q, r),
-      selectChamber: (id: string | null) => this.selectChamber(id),
-      digChamber: (id: string) => this.digChamber(id),
+      selectUpgrades: (role: UpgradeRole | null) => this.selectUpgrades(role),
       selectedId: () => this.selectedId,
       selectedCell: () => this.selectedCell,
-      selectedChamber: () => this.selectedChamber,
-      chambers: () => ({ ...this.state.chambers }),
+      selectedUpgrades: () => this.selectedUpgrades,
     };
     (window as unknown as { debug: typeof dbg }).debug = dbg;
   }

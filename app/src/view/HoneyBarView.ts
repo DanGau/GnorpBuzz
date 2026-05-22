@@ -47,11 +47,28 @@ export class HoneyBarView {
   // consumption events without the sim having to call us explicitly.
   private lastSeenHoney = -1;
 
-  constructor() {
+  constructor(onClick?: () => void) {
     this.container = new Container();
     this.container.x = WORLD.HIVE.x + JAR_X_OFFSET;
     this.container.y = WORLD.HIVE.y + JAR_Y_OFFSET;
     this.bobPhase = Math.random() * Math.PI * 2;
+    // The honey jar is the cantors' upgrade anchor — click it to open the
+    // Cantor upgrade panel.
+    if (onClick) {
+      this.container.eventMode = 'static';
+      this.container.cursor = 'pointer';
+      this.container.hitArea = {
+        contains: (x: number, y: number): boolean =>
+          x >= -JAR_W / 2 - 3 &&
+          x <= JAR_W / 2 + 3 &&
+          y >= -JAR_H / 2 - NECK_H - 3 &&
+          y <= JAR_H / 2 + 12,
+      };
+      this.container.on('pointertap', (e) => {
+        e.stopPropagation();
+        onClick();
+      });
+    }
 
     this.glow = new Graphics();
     this.shell = new Graphics();

@@ -1,4 +1,4 @@
-// Positioned representation of the dig site. Strike target for geomancers.
+// Positioned representation of the dig site. Strike target for cantors.
 // Visual state (crack severity, glow, artifact-emerge pose) is read from sim
 // by the view layer; the entity just provides a stable position and a
 // canonical strike anchor.
@@ -14,7 +14,7 @@ export class DigSiteEntity {
     this.y = y;
   }
 
-  // Geomancers aim their strike at a point on the mound's surface, slightly
+  // Cantors aim their spark at a point on the mound's surface, slightly
   // above center.
   strikePoint(): { x: number; y: number } {
     return { x: this.x, y: this.y - 14 };

@@ -9,37 +9,55 @@ An incremental/idle game where a colony of **wizard bees** chips its way through
 - Cozy, nature-forward, whimsical — with a wink at high fantasy. The bees take their magic *very* seriously.
 - 2D with simple bee sprites — always in a "buzzing" animation state. Spellcaster bees wear tiny pointed hats.
 - One persistent background: meadow at the bottom, sky above, stars at the top. Sky gradually darkens as the player progresses.
-- Below the meadow line, the **underground cross-section** shows the colony's excavated chambers (tech tree) — see `docs/underground.md`.
 
 ## The Wizard Reframing
 
-All worker bees are members of a magical caste:
+Bees split into a mundane and a magical caste:
 
-- **Foragers** are the *mundane* caste. They have no spells. They harvest pollen from meadow flowers; the hive refines pollen into **honey** — the colony's mana.
-- **Geomancers** are melee earth-magic specialists. They dive-bomb the rock from above, channeling stored mana into a single thunderous strike.
-- **Cantors** are cantrip-tier hover-casters. They float just above the comb and lob slow magical sparks at the rock from a safe distance — small damage, frequent casts, low mana cost.
+- **Foragers** harvest pollen from meadow flowers (one dot per trip) and deliver it to the **Pollen Silo**. They park around the silo between trips.
+- **Honey Workers** park around the **Honey Jar**. They fly to the Silo, pluck one pollen, carry it back to the Jar, and refine it into **honey** — the colony's mana.
+- **Wax Workers** park around the **Wax Block**. Same loop, producing **wax** — the colony's upgrade currency.
+- **Cantors** are cantrip-tier hover-casters — currently the colony's only attacker. They float near the honey jar and lob slow magical sparks at the rock — small damage, frequent casts, low mana cost.
 
-Whenever a spellcaster wants to attack, it tries to spend honey. If the reservoir is empty, the caster drifts into an **idle swarm** near the hive for a few seconds, then retries. Mana flow is the central economic pressure: too few foragers and the spellcasters stall; too many and the comb's pollen overflows the cap and just feeds upgrades.
+> **Note:** the **Geomancer** (a heavy melee dive-bomber) is parked for now and removed from the build while the economy is fleshed out. Cantors are the sole damage source in the current slice.
+
+Whenever a cantor wants to cast, it tries to spend honey. If the reservoir is empty, it drifts into an **idle swarm** near the hive for a few seconds, then retries. The bottleneck moves around: too few foragers and the Silo dries up; too few Honey Workers and cantors idle-swarm with a full Silo in plain sight; too few Wax Workers and the player can't afford the next upgrade. Every state of the economy is visible in the buildings: a full Silo means "spend or rebalance," a draining Jar means "cantors are eating into the reserve faster than honey workers can refill it," etc.
 
 ## Resources
 
-| Resource | Source | Used for |
-|----------|--------|----------|
-| **Pollen** | Foragers harvest meadow flowers | Cell unlocks, worker placement, chamber excavation, upgrades |
-| **Honey** (mana) | Refined automatically from deposited pollen, capped at the hive's reservoir | Spell casts (Geomancer, Cantor) |
+All three resource pools are **capped**, and each lives in a visible
+above-ground building around the hive. The buildings ARE the dashboard:
 
-A forager's deposit credits BOTH pools: pollen increments the upgrade currency, and as long as the honey reservoir has room, the same deposit also tops it up. When the reservoir is full, deposits still build pollen for upgrades — but spellcasters won't gain anything until casts free up room.
+| Resource | Container | Cap | Source | Used for |
+|----------|-----------|-----|--------|----------|
+| **Pollen** | Pollen Silo (left, meadow ground) | 20 | Foragers harvest meadow flowers; one dot per trip | Raw input only — Workers pick it up to refine |
+| **Honey** (mana) | Honey Jar (above the hive, between economy and combat) | 10 | Honey Workers deliver pollen from the Silo | Spell casts (Cantor 1) |
+| **Wax** | Wax Block (left, meadow ground) | 40 | Wax Workers deliver pollen from the Silo | All upgrades, cell unlocks, worker hires |
 
-> **Note:** the long-term plan is to replace pollen as the upgrade currency with a more thematic "research/insight" resource. Pollen-for-upgrades is a placeholder while we shake out the spell economy.
+**Bees never use the comb as a destination.** The comb is a population
+dial: how many of each role exist. Every bee homes to a *building*, not a
+cell. The layout reads left-to-right as the colony's economic story:
+economy zone on the left (Pollen Silo + Wax Block, where foragers and wax
+workers gather), refinery in the middle (Honey Jar above the hive, where
+honey workers and cantors cluster), and the boulder on the right that
+cantors chip away at.
+
+**Caps are the central pressure.** When a pool is full, the bees that
+supply it loiter at their park spot — visible backpressure that reads as
+"you need to spend before more can be produced." Honey at cap → honey
+workers bob at the jar. Wax at cap → wax workers bob at the block. Silo
+full → foragers loiter at the silo instead of flying out for more.
+
+See `docs/economy-sketch.md` for the full design history.
 
 ## Core Loop
 
 1. Player buys a Forager — it starts gathering pollen from flowers.
-2. Player buys a Geomancer (or Cantor) — it begins casting spells at the current rock, burning honey to deal damage.
-3. As honey runs dry, spellcasters drop into an idle swarm until foragers refill the reservoir.
+2. Player buys a Cantor — it begins casting sparks at the current rock, burning honey to deal damage.
+3. As honey runs dry, cantors drop into an idle swarm until workers refill the reservoir.
 4. The rock breaks open → an artifact is revealed → Scientist Bee writes a journal entry.
 5. Player dismisses the artifact → the next rock (more HP) takes its place.
-6. Player buys more workers, expands the comb (new hex cells), digs new underground chambers to unlock upgrade rows.
+6. Player buys more workers, expands the comb (new hex cells), and buys role upgrades by clicking the relevant building.
 7. Cycle repeats across 7 tiers of progressively absurd "relics."
 
 ## The Scientist Bee & Journal System
@@ -48,29 +66,30 @@ One visually distinct bee witnesses every reveal and writes a short field note. 
 
 ## Spellcaster Roles in Detail
 
-### Geomancer
-
-- Big dramatic dive-bomb onto the rock. One strike per spawn; the bee "expires" after each cast and the cell respawns a fresh one on a cooldown.
-- **Mana cost: 2 honey.** High cost = each strike feels deliberate.
-- **Damage:** the bulk of moment-to-moment progress on the rock.
-- **Upgrade paths (Geomancer Hall chamber):** Sharpened Stinger (+damage), Hasty Recruits (−respawn time), Heavy Swarm (+flight speed).
-
 ### Cantor
 
-- Hovers above its home cell. Doesn't fly to the rock — fires a slow magical spark across the meadow at it.
+- Hovers near the Honey Jar. Doesn't fly to the rock — fires a slow magical spark across the meadow at it.
 - **Mana cost: 1 honey.** Cheap and frequent.
-- **Damage:** ~⅓ of a Geomancer strike, but with much faster cadence.
-- **Upgrade paths (Cantor Cloister chamber):** Quicker Cantrip (−cast interval), Twin Spark (+damage), Mana Sip (every Nth cast refunds 1 honey).
+- **Damage:** small per-hit, fast cadence — currently the colony's only damage source.
+- **Upgrade paths (click the Honey Jar):** Quicker Cantrip (−cast interval), Twin Spark (+damage), Mana Sip (every Nth cast refunds 1 honey).
 
-The two casters have different rhythm and risk shapes: Geomancers are big chunky bursts; Cantors are a constant background patter. A mature colony usually wants both.
+> **Parked:** the **Geomancer** (a big dive-bomb melee caster, 2 honey/strike) is removed from the current build while the economy is built up. It'll likely return as a second attacker once the core loop is solid.
 
 ## Hive expansion & layout
 
-The comb is a hex grid the player grows outward one cell at a time. Cells are assigned permanently to a role on placement. **Same-role neighbors** grant adjacency synergy bonuses (Forager speed, Geomancer damage, Cantor — see `docs/dps-model.md`). Layout matters.
+The comb is a hex grid the player grows outward one cell at a time. Cells are assigned permanently to a role on placement. **Same-role neighbors** grant adjacency synergy bonuses (Forager speed, Cantor damage — see `docs/dps-model.md`). Layout matters.
 
 ## Upgrade System
 
-Upgrades live inside underground chambers (`docs/underground.md`). To unlock a row, dig the chamber that contains it. Chambers cost pollen; their dig cost gates how fast the player can specialize.
+Upgrades are **contextual panels** that open when you click the world object a role is tied to — no separate tech-tree screen. Each panel lists that role's upgrade rows; buying is gated only by wax cost (no unlock/dig step).
+
+| Click… | Opens upgrades for |
+|--------|--------------------|
+| **Pollen Silo** | Forager (Swift Wings, Quick Forage) |
+| **Honey Jar** | Cantor (Quicker Cantrip, Twin Spark, Mana Sip) |
+| **Wax Block** | Wax Worker (Swift Haul, Rich Combs, Deep Coffers) |
+
+Clicking a building also pans the camera to a side-on "economy" framing of the three refinery buildings. (There is no underground — that view was removed.)
 
 ## Win State
 

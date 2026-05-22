@@ -54,7 +54,6 @@ export class World {
   update(dtMs: number, state: GameState): void {
     for (const cell of this.hive.cells.values()) {
       for (const bee of cell.bees) bee.update(dtMs, state, this);
-      cell.tickRespawn(dtMs, state);
     }
     this.particles.update(dtMs);
   }
@@ -122,7 +121,6 @@ export class World {
           r: c.r,
           role: c.role,
           alive: c.bees.length,
-          respawning: c.respawnQueue.length,
         })),
       },
       flowers: this.flowers.size,

@@ -1,11 +1,9 @@
 import { Bee } from './Bee';
-import type { CellRole, GameState } from '../sim/state';
-import { geomancerRespawnMs } from '../sim/state';
+import type { CellRole } from '../sim/state';
 
 // Positioned representation of a single filled hive cell. Each cell holds
-// exactly one worker's worth of output. Forager cells keep a persistent bee;
-// geomancer cells run a one-shot respawn loop (the bee flies out, strikes,
-// expires, and a fresh one pops after a cooldown).
+// exactly one worker's worth of output — a persistent bee (Forager, Honey
+// Worker, Wax Worker, or Cantor) spawned when the cell is created.
 
 export class CellEntity {
   q: number;
@@ -14,8 +12,6 @@ export class CellEntity {
   y: number;
   role: CellRole;
   bees: Bee[];
-  // Geomancer-only: ms remaining until the cell respawns its bee.
-  respawnQueue: number[];
 
   constructor(q: number, r: number, x: number, y: number, role: CellRole) {
     this.q = q;
@@ -24,41 +20,10 @@ export class CellEntity {
     this.y = y;
     this.role = role;
     this.bees = [];
-    this.respawnQueue = [];
-    // Seed the cell's one worker. Geomancers come in via the respawn queue
-    // (cooldown 0 = immediate), foragers spawn directly.
-    if (role === 'geomancer') {
-      this.respawnQueue.push(0);
-    } else {
-      this.spawnBee();
-    }
+    this.spawnBee();
   }
 
   spawnBee(): void {
     this.bees.push(new Bee(this.role, this.x, this.y, this.q, this.r));
-  }
-
-  // Geomancer cells: tick down the respawn timer and reap expired bees.
-  // Foragers don't expire so this is a no-op for them.
-  tickRespawn(dtMs: number, state: GameState): void {
-    if (this.role !== 'geomancer') return;
-
-    let i = 0;
-    while (i < this.bees.length) {
-      if (this.bees[i].state === 'expired') {
-        this.bees.splice(i, 1);
-        this.respawnQueue.push(geomancerRespawnMs(state));
-      } else {
-        i += 1;
-      }
-    }
-
-    for (let j = this.respawnQueue.length - 1; j >= 0; j--) {
-      this.respawnQueue[j] -= dtMs;
-      if (this.respawnQueue[j] <= 0) {
-        this.respawnQueue.splice(j, 1);
-        this.spawnBee();
-      }
-    }
   }
 }

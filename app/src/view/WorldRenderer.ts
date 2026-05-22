@@ -1,8 +1,8 @@
 import { Application, Container } from 'pixi.js';
-import type { GameState, UpgradeId } from '../sim/state';
-import { CHAMBERS, hexDistance, TUNING } from '../sim/state';
+import type { GameState, UpgradeId, UpgradeRole } from '../sim/state';
+import { hexDistance, TUNING } from '../sim/state';
 import type { World } from '../world/World';
-import { UNDERGROUND, WORLD } from '../world/layout';
+import { WORLD } from '../world/layout';
 import { WorldView } from './WorldView';
 import { FlowerView } from './FlowerView';
 import { HiveView } from './HiveView';
@@ -10,9 +10,17 @@ import { BeeView } from './BeeView';
 import { DigSiteView } from './DigSiteView';
 import { ParticleView } from './ParticleView';
 import { CellRadialView } from './CellRadialView';
-import { UndergroundView } from './UndergroundView';
-import { ChamberRadialView } from './ChamberRadialView';
+import { UpgradePanelView } from './UpgradePanelView';
 import { HoneyBarView } from './HoneyBarView';
+import { PollenSiloView } from './PollenSiloView';
+import { WaxBlockView } from './WaxBlockView';
+
+// World-space anchor each upgrade panel docks under, keyed by role.
+const UPGRADE_ANCHORS: Record<UpgradeRole, { x: number; y: number }> = {
+  forager: WORLD.POLLEN_SILO,
+  'wax-worker': WORLD.WAX_BLOCK,
+  cantor: WORLD.HONEY_JAR,
+};
 
 export interface WorldRendererCallbacks {
   onHiveClick: () => void;
@@ -21,9 +29,10 @@ export interface WorldRendererCallbacks {
   onBackgroundClick: () => void;
   onBuyCell: (q: number, r: number) => void;
   onAssignCell: (q: number, r: number, role: import('../sim/state').CellRole) => void;
-  onChamberClick: (id: string) => void;
-  onDigChamber: (id: string) => void;
   onBuyUpgrade: (id: UpgradeId) => void;
+  // Clicking a resource building opens that role's contextual upgrade panel
+  // (and pans the camera to frame it).
+  onShowUpgrades: (role: UpgradeRole) => void;
 }
 
 interface Framing {
@@ -32,24 +41,7 @@ interface Framing {
   y: number;
 }
 
-// World-space Y of the bottom edge of the deepest chamber row. Used by
-// the hive camera framing so even the smallest hive always pulls the
-// underground band fully into view.
-function deepestChamberBottom(): number {
-  let maxRow = 0;
-  for (const spec of CHAMBERS) {
-    if (spec.plot.row > maxRow) maxRow = spec.plot.row;
-  }
-  // Each row's chamber center sits at TOP_Y + ROW_HEIGHT * (row + 0.5);
-  // the bottom edge is half a CHAMBER_H further down.
-  return (
-    UNDERGROUND.TOP_Y +
-    UNDERGROUND.ROW_HEIGHT * (maxRow + 0.5) +
-    UNDERGROUND.CHAMBER_H / 2
-  );
-}
-
-export type CameraTarget = 'overview' | 'hive';
+export type CameraTarget = 'overview' | 'hive' | 'economy';
 
 export class WorldRenderer {
   readonly root: Container;
@@ -60,9 +52,10 @@ export class WorldRenderer {
   private digSiteView: DigSiteView;
   private particleView: ParticleView;
   private cellRadialView: CellRadialView;
-  private undergroundView: UndergroundView;
-  private chamberRadialView: ChamberRadialView;
+  private upgradePanelView: UpgradePanelView;
   private honeyBarView: HoneyBarView;
+  private pollenSiloView: PollenSiloView;
+  private waxBlockView: WaxBlockView;
   private fitListeners: (() => void)[] = [];
 
   private app!: Application;
@@ -88,32 +81,28 @@ export class WorldRenderer {
       onBuyCell: callbacks.onBuyCell,
       onAssignCell: callbacks.onAssignCell,
     });
-    this.undergroundView = new UndergroundView({
-      onChamberClick: callbacks.onChamberClick,
-      onDigChamber: callbacks.onDigChamber,
-    });
-    this.chamberRadialView = new ChamberRadialView({
-      onDigChamber: callbacks.onDigChamber,
+    this.upgradePanelView = new UpgradePanelView({
       onBuyUpgrade: callbacks.onBuyUpgrade,
       onDismissBackdrop: callbacks.onBackgroundClick,
     });
-    this.honeyBarView = new HoneyBarView();
+    this.honeyBarView = new HoneyBarView(() => callbacks.onShowUpgrades('cantor'));
+    this.pollenSiloView = new PollenSiloView(() => callbacks.onShowUpgrades('forager'));
+    this.waxBlockView = new WaxBlockView(() => callbacks.onShowUpgrades('wax-worker'));
 
     this.root.addChild(this.worldView.container);
     this.root.addChild(this.flowerView.container);
     this.root.addChild(this.digSiteView.container);
-    // Underground sits BEHIND the hive so the hive shell visually overlaps
-    // the soil layer at the meadow line.
-    this.root.addChild(this.undergroundView.container);
     this.root.addChild(this.hiveView.container);
-    // Honey jar floats above the hive — drawn after the hive so it sits
-    // in front of the shell, and before particles so mana orbs/sparkles
-    // emitted at the jar render on top of it.
+    // Resource containers (Pollen Silo, Wax Block, Honey Jar). Drawn
+    // after the hive so they sit in front of the shell, and before
+    // particles so deposit puffs/sparkles render on top of them.
+    this.root.addChild(this.pollenSiloView.container);
+    this.root.addChild(this.waxBlockView.container);
     this.root.addChild(this.honeyBarView.container);
     this.root.addChild(this.beeView.container);
     this.root.addChild(this.particleView.container);
     this.root.addChild(this.cellRadialView.container);
-    this.root.addChild(this.chamberRadialView.container);
+    this.root.addChild(this.upgradePanelView.container);
 
     this.worldView.container.eventMode = 'static';
     this.worldView.container.on('pointertap', () => callbacks.onBackgroundClick());
@@ -145,9 +134,11 @@ export class WorldRenderer {
 
   private onResize(): void {
     const goal =
-      this.cameraTarget === 'hive'
-        ? this.frameHive(this.hiveFocusRadius, false)
-        : this.frameOverview();
+      this.cameraTarget === 'economy'
+        ? this.frameEconomy()
+        : this.cameraTarget === 'hive'
+          ? this.frameHive(this.hiveFocusRadius)
+          : this.frameOverview();
     this.snapTo(goal);
     for (const cb of this.fitListeners) cb();
   }
@@ -176,50 +167,27 @@ export class WorldRenderer {
     };
   }
 
-  // Hive-centric framing. The camera frames a vertical band that always
-  // contains BOTH the full hive shell AND every chamber row underground —
-  // even at the smallest hive (3 starting cells) the deepest chamber stays
-  // in view. The band is computed from the hive's actual shell radius plus
-  // the underground depth derived from `CHAMBERS`.
-  //
-  // When a chamber is focused, the camera PANS down (same scale) so the
-  // chamber + its drop-down upgrade panel sit comfortably in frame.
-  //
-  // Horizontal centering is clamped to the world bounds so the empty
-  // space outside the world (x < 0 or x > WORLD.WIDTH) never shows.
-  private frameHive(focusRadius: number, focusChamber: boolean): Framing {
+  // Hive-centric framing — frames the hive shell (the workable hex comb)
+  // plus the honey jar floating above it. No underground band any more.
+  // Horizontal/vertical centering is clamped to world bounds so empty
+  // space outside the world never shows.
+  private frameHive(focusRadius: number): Framing {
     const w = this.app.renderer.width;
     const h = this.app.renderer.height;
 
-    // Vertical band the camera must contain: from the top of the hive
-    // shell down through the bottom of the deepest chamber row, with a
-    // small padding so neither edge is flush against the viewport edge.
-    const hiveTop = WORLD.HIVE.y - focusRadius;
-    const undergroundBottom = deepestChamberBottom();
-    const PADDING = 30;
-    const bandTop = hiveTop - PADDING;
-    const bandBottom = undergroundBottom + PADDING;
+    // Vertical band: from above the honey jar (which floats ~95px above
+    // the hive center) down past the bottom of the hive shell.
+    const PADDING = 24;
+    const bandTop = Math.min(WORLD.HIVE.y - focusRadius, WORLD.HONEY_JAR.y - 30) - PADDING;
+    const bandBottom = WORLD.HIVE.y + focusRadius + PADDING;
     const bandHeight = bandBottom - bandTop;
     const bandCenterY = (bandTop + bandBottom) / 2;
 
-    // Width budget: keep the hive's horizontal extent comfortable. The
-    // hive shell's flat-top hexagon spans roughly 2 × focusRadius wide,
-    // matching its vertical extent.
     const hiveWidth = 2 * focusRadius;
 
-    const s = Math.min(
-      (w * 0.96) / hiveWidth,
-      (h * 0.96) / bandHeight,
-    );
+    const s = Math.min((w * 0.96) / hiveWidth, (h * 0.96) / bandHeight);
 
     let cy = bandCenterY;
-    // When focused on a chamber, shift the camera down so the chamber +
-    // its drop-down upgrade panel come into view. The hive partially
-    // scrolls off the top — desired, since the player's attention is on
-    // the chamber.
-    if (focusChamber) cy += 95;
-    // Clamp camera center so the visible region stays inside the world
-    // (no black bars from showing past the world's edges in either axis).
     const halfWorldVisible = w / (2 * s);
     const minCx = halfWorldVisible;
     const maxCx = WORLD.WIDTH - halfWorldVisible;
@@ -238,7 +206,39 @@ export class WorldRenderer {
     };
   }
 
-  private hiveFramingFor(state: GameState, focusChamber: boolean): Framing {
+  // Side-on economy framing. Centers on the patch of meadow holding the
+  // Pollen Silo, Wax Block, and the forager/wax-worker park clusters
+  // around them — workers and foragers buzzing between buildings fill
+  // the frame at this zoom. Anchor point and span are derived from the
+  // building layout so moving WORLD.POLLEN_SILO / WORLD.WAX_BLOCK pulls
+  // the camera along automatically.
+  private frameEconomy(): Framing {
+    const w = this.app.renderer.width;
+    const h = this.app.renderer.height;
+    // Frame the whole refinery pipeline: Pollen Silo + Wax Block on the
+    // ground and the Honey Jar floating above — so clicking any of the
+    // three economy buildings shows the full chain with breathing room.
+    const cx = 178;
+    const cy = 545;
+    const rectW = 340;
+    const rectH = 320;
+    const s = Math.min((w * 0.92) / rectW, (h * 0.92) / rectH);
+    // Clamp horizontally so we don't pan past the world's left edge.
+    const halfWorldVisible = w / (2 * s);
+    const minCx = halfWorldVisible;
+    const maxCx = WORLD.WIDTH - halfWorldVisible;
+    const ccx =
+      minCx > maxCx
+        ? WORLD.WIDTH * 0.5
+        : Math.min(maxCx, Math.max(minCx, cx));
+    return {
+      scale: s,
+      x: w * 0.5 - ccx * s,
+      y: h * 0.5 - cy * s,
+    };
+  }
+
+  private hiveFramingFor(state: GameState): Framing {
     let maxRing = 1;
     for (const c of state.hive.cells) {
       maxRing = Math.max(maxRing, hexDistance(c.q, c.r));
@@ -246,7 +246,7 @@ export class WorldRenderer {
     const shellRing = Math.min(maxRing + 1, TUNING.MAX_COMB_RADIUS);
     const shell = WORLD.HEX_SIZE * (Math.sqrt(3) * shellRing + 1.9);
     this.hiveFocusRadius = shell + WORLD.HEX_SIZE * 3;
-    return this.frameHive(this.hiveFocusRadius, focusChamber);
+    return this.frameHive(this.hiveFocusRadius);
   }
 
   worldToScreen(worldX: number, worldY: number, _app: Application): { x: number; y: number } {
@@ -271,20 +271,22 @@ export class WorldRenderer {
     dtMs: number,
     selectedId: string | null,
     selectedCell: { q: number; r: number } | null,
-    selectedChamber: string | null,
+    selectedUpgrades: UpgradeRole | null,
   ): void {
-    // Selection drives the camera: anything that focuses on the hive (a
-    // selected cell, the whole hive, or any chamber underground) pulls us
-    // into the zoomed-in framing; anything else is the wide overview.
-    const zoomedIn =
-      selectedCell !== null ||
-      selectedId === 'hive' ||
-      selectedChamber !== null;
-    this.cameraTarget = zoomedIn ? 'hive' : 'overview';
+    // Selection drives the camera. An open upgrade panel (forager / cantor /
+    // wax-worker) frames the economy buildings. Otherwise cell / whole-hive
+    // selection gives the hive comb framing; everything else is the wide
+    // overview.
+    const economyFocus = selectedUpgrades !== null;
+    const hiveFocus =
+      !economyFocus && (selectedCell !== null || selectedId === 'hive');
+    this.cameraTarget = economyFocus ? 'economy' : hiveFocus ? 'hive' : 'overview';
     const goal =
-      this.cameraTarget === 'hive'
-        ? this.hiveFramingFor(state, selectedChamber !== null)
-        : this.frameOverview();
+      this.cameraTarget === 'economy'
+        ? this.frameEconomy()
+        : this.cameraTarget === 'hive'
+          ? this.hiveFramingFor(state)
+          : this.frameOverview();
 
     // Frame-rate-independent exponential ease toward the goal framing.
     const a = 1 - Math.pow(0.002, dtMs / 1000);
@@ -298,17 +300,15 @@ export class WorldRenderer {
     this.flowerView.update(state, world, dtMs);
     this.hiveView.update(state, world, selectedCell, cellsInteractive, dtMs);
     this.honeyBarView.update(state, dtMs);
+    this.pollenSiloView.update(state, dtMs);
+    this.waxBlockView.update(state, dtMs);
     this.beeView.update(world, state.elapsedMs);
     this.digSiteView.update(state, dtMs, selectedId === 'dig-site');
     this.particleView.update(world.particles);
     this.cellRadialView.update(state, selectedCell, dtMs);
-    this.undergroundView.update(state, selectedChamber, cellsInteractive, dtMs);
-    // Visible world rect in world coordinates, computed from the live
-    // camera transform. Passed to the chamber panel so its hover tooltip
-    // can decide whether to fan right or left based on what's actually
-    // on-screen, not on the abstract world bounds.
     const viewportWorld = this.visibleWorldRect();
-    this.chamberRadialView.update(state, selectedChamber, dtMs, viewportWorld);
+    const anchor = selectedUpgrades ? UPGRADE_ANCHORS[selectedUpgrades] : null;
+    this.upgradePanelView.update(state, selectedUpgrades, anchor, dtMs, viewportWorld);
   }
 
   // Inverse of the camera transform: returns the world-space rect that

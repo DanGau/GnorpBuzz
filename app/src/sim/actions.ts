@@ -5,24 +5,19 @@ import {
   mustPlaceForager,
   cellCost,
   nextWorkerCost,
-  totalPollen,
+  totalWax,
+  spendWax,
   UPGRADE_DEFS,
   getUpgradeTier,
   isUpgradeUnlocked,
   nextUpgradeCost,
   artifactForTier,
-  chamberSpec,
-  isChamberBuilt,
   TUNING,
 } from './state';
 
 export interface ActionResult {
   ok: boolean;
   reason?: string;
-}
-
-function spendPollen(state: GameState, amount: number): void {
-  state.hive.pollen = Math.max(0, state.hive.pollen - amount);
 }
 
 // Unlock a new comb cell at the given hex coordinate. Must be on the buyable
@@ -34,10 +29,10 @@ export function buyCell(state: GameState, q: number, r: number): ActionResult {
     return { ok: false, reason: 'Cell not adjacent to the comb' };
   }
   const cost = cellCost(q, r);
-  if (totalPollen(state) < cost) {
-    return { ok: false, reason: `Need ${cost} pollen` };
+  if (totalWax(state) < cost) {
+    return { ok: false, reason: `Need ${cost} wax` };
   }
-  spendPollen(state, cost);
+  spendWax(state, cost);
   hive.cells.push({ q, r, role: null });
   return { ok: true };
 }
@@ -58,10 +53,10 @@ export function assignCell(
     return { ok: false, reason: 'Your first worker must be a Forager' };
   }
   const cost = nextWorkerCost(state, role);
-  if (cost > 0 && totalPollen(state) < cost) {
-    return { ok: false, reason: `Need ${cost} pollen` };
+  if (cost > 0 && totalWax(state) < cost) {
+    return { ok: false, reason: `Need ${cost} wax` };
   }
-  if (cost > 0) spendPollen(state, cost);
+  if (cost > 0) spendWax(state, cost);
   cell.role = role;
   return { ok: true };
 }
@@ -110,31 +105,15 @@ export function buyUpgrade(state: GameState, id: UpgradeId): ActionResult {
   const def = UPGRADE_DEFS[id];
   if (!def) return { ok: false, reason: `Unknown upgrade ${id}` };
   if (!isUpgradeUnlocked(state, id)) {
-    return { ok: false, reason: `Upgrade locked — needs more journal entries` };
+    return { ok: false, reason: `Already at max tier` };
   }
   const cost = nextUpgradeCost(state, id);
   if (cost <= 0) return { ok: false, reason: `Already at max tier` };
-  if (totalPollen(state) < cost) {
-    return { ok: false, reason: `Need ${cost} pollen` };
+  if (totalWax(state) < cost) {
+    return { ok: false, reason: `Need ${cost} wax` };
   }
-  spendPollen(state, cost);
+  spendWax(state, cost);
   state.upgrades[id] = getUpgradeTier(state, id) + 1;
-  return { ok: true };
-}
-
-// Excavate a chamber — spends the dig cost, flips the chamber to built.
-// Building a chamber is the unlock gate for every upgrade it owns.
-export function digChamber(state: GameState, id: string): ActionResult {
-  const spec = chamberSpec(id);
-  if (!spec) return { ok: false, reason: `Unknown chamber ${id}` };
-  if (isChamberBuilt(state, id)) {
-    return { ok: false, reason: 'Chamber already built' };
-  }
-  if (totalPollen(state) < spec.digCost) {
-    return { ok: false, reason: `Need ${spec.digCost} pollen` };
-  }
-  spendPollen(state, spec.digCost);
-  state.chambers[id] = { built: true };
   return { ok: true };
 }
 

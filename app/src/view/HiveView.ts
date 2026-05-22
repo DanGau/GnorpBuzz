@@ -1,13 +1,12 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { World } from '../world/World';
 import type { GameState, HiveCell } from '../sim/state';
-import { buyableCells, cellCost, cellSynergy, hexDistance, totalPollen, TUNING } from '../sim/state';
+import { buyableCells, cellCost, cellSynergy, hexDistance, totalWax, TUNING } from '../sim/state';
 import { WORLD, hexToWorld } from '../world/layout';
 
 // Renders the Hive as a honeycomb of hex cells. Each cell is one of:
 //   empty    — unlocked, no worker
 //   forager  — holds a forager worker (gold)
-//   geomancer— holds an geomancer worker (red stone)
 //   buyable  — locked frontier cell, can be unlocked
 // The selected cell gets a bright halo. Buyable cells pulse invitingly.
 //
@@ -15,7 +14,15 @@ import { WORLD, hexToWorld } from '../world/layout';
 // whole-hive hit area catches clicks (→ zoom into the hive); when zoomed
 // in, the per-cell hit areas are live so the player can pick cells.
 
-type CellKind = 'empty' | 'forager' | 'geomancer' | 'cantor' | 'buyable';
+type CellKind =
+  | 'empty'
+  | 'forager'
+  | 'honey-worker'
+  | 'wax-worker'
+  | 'cantor'
+  | 'buyable';
+
+type FilledKind = Exclude<CellKind, 'empty' | 'buyable'>;
 
 interface CellSprite {
   key: string;
@@ -26,7 +33,7 @@ interface CellSprite {
   base: Graphics;
   hit: Graphics;
   glyph: Text | null;
-  // Price label for buyable cells (e.g. "12🌼"). Lazily created.
+  // Price label for buyable cells (e.g. "12🕯"). Lazily created.
   priceLabel: Text | null;
   // Visual cost cached so we only redraw when the displayed value or
   // affordability actually changes.
@@ -37,9 +44,10 @@ interface CellSprite {
 
 // Match the radial menu's worker glyphs so the shop icon and the cell icon
 // read as the same thing.
-const ROLE_GLYPH: Record<'forager' | 'geomancer' | 'cantor', string> = {
+const ROLE_GLYPH: Record<FilledKind, string> = {
   forager: '🌼',
-  geomancer: '⛏',
+  'honey-worker': '🍯',
+  'wax-worker': '🕯',
   cantor: '✦',
 };
 const GLYPH_SUPERSAMPLE = 6;
@@ -68,9 +76,12 @@ function hexOutline(size: number, cx: number, cy: number, flatTop: boolean): num
   return pts;
 }
 
-const CELL_COLORS: Record<'forager' | 'geomancer' | 'cantor', number> = {
+const CELL_COLORS: Record<FilledKind, number> = {
   forager: 0xe8b04c,
-  geomancer: 0xc94a2a,
+  // Honey workers tint warm-amber, wax workers pale cream — so a glance at
+  // the comb shows the honey-vs-wax mix without reading any text.
+  'honey-worker': 0xe89638,
+  'wax-worker': 0xe8d8a4,
   cantor: 0x9a7adf,
 };
 
@@ -241,7 +252,7 @@ export class HiveView {
       if (sprite.glyph) sprite.glyph.visible = cellsInteractive;
 
       const synergy =
-        want.kind === 'forager' || want.kind === 'geomancer' || want.kind === 'cantor'
+        want.kind !== 'empty' && want.kind !== 'buyable'
           ? cellSynergy(state.hive, want.q, want.r)
           : 0;
       if (sprite.kind !== want.kind || sprite.synergy !== synergy) {
@@ -256,7 +267,7 @@ export class HiveView {
       // every frame for buyables (the breath animation already redraws).
       if (sprite.kind === 'buyable') {
         const cost = cellCost(sprite.q, sprite.r);
-        const affordable = totalPollen(state) >= cost;
+        const affordable = totalWax(state) >= cost;
         if (sprite.shownCost !== cost || sprite.shownAffordable !== affordable) {
           sprite.shownCost = cost;
           sprite.shownAffordable = affordable;
@@ -391,15 +402,17 @@ export class HiveView {
       return;
     }
 
-    // Worker cell — forager or geomancer. The glyph (flower / pickaxe)
-    // replaces the old bee dot so the cell icon matches the shop's option.
-    const color = CELL_COLORS[sprite.kind];
+    // Filled cell — forager, honey-worker, wax-worker, or cantor. The glyph
+    // (flower / honeypot / candle / spark) matches the shop's option so the
+    // cell icon and the radial bubble read as the same thing.
+    const filledKind = sprite.kind as FilledKind;
+    const color = CELL_COLORS[filledKind];
     g.poly(outer).fill(0x2a2012);
     g.poly(outer).stroke({ color: 0x1a1408, width: strokeMain });
     g.poly(inner).fill(color);
     g.poly(hexPoints(HEX * 0.654)).fill({ color: 0xffffff, alpha: 0.12 });
 
-    this.ensureGlyph(sprite, ROLE_GLYPH[sprite.kind]);
+    this.ensureGlyph(sprite, ROLE_GLYPH[filledKind]);
 
     // Synergy pips around the rim — one per same-role neighbor.
     for (let i = 0; i < sprite.synergy; i++) {
@@ -438,7 +451,7 @@ export class HiveView {
   // Price label for a buyable cell — supersampled like the role glyph so
   // it stays crisp at zoom. Sits just below the pulsing "+".
   private ensurePriceLabel(sprite: CellSprite, cost: number, affordable: boolean): void {
-    const text = cost === 0 ? 'FREE' : `${cost}🌼`;
+    const text = cost === 0 ? 'FREE' : `${cost}🕯`;
     const fill = affordable ? 0xfff2cf : 0x8a7a4a;
     if (!sprite.priceLabel) {
       const t = new Text({
@@ -476,11 +489,13 @@ export class HiveView {
     sprite.glyph.destroy();
     sprite.glyph = null;
   }
+
 }
 
 function kindOf(cell: HiveCell): CellKind {
   if (cell.role === 'forager') return 'forager';
-  if (cell.role === 'geomancer') return 'geomancer';
+  if (cell.role === 'honey-worker') return 'honey-worker';
+  if (cell.role === 'wax-worker') return 'wax-worker';
   if (cell.role === 'cantor') return 'cantor';
   return 'empty';
 }

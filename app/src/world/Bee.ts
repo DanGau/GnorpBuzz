@@ -2,41 +2,114 @@ import type { GameState } from '../sim/state';
 import {
   TUNING,
   getUpgradeTier,
-  geomancerDamagePerStrike,
   cantorDamagePerSpark,
   cantorCastIntervalMs,
   cantorRefundEveryNCasts,
   cellSynergy,
-  refineHoney,
+  addPollen,
+  takePollen,
+  pollenAvailable,
+  pollenSiloHasRoom,
+  addHoney,
+  addWax,
+  waxCap,
+  waxPerDelivery,
   spendHoney,
   manaCostFor,
 } from '../sim/state';
 import type { World } from './World';
+import { WORLD } from './layout';
+
+// Per-role idle parking zones. Each bee role gathers around a visible
+// world-space building, so the overview reads the colony's role mix at
+// a glance:
+//
+//   FORAGER       → swarms the Pollen Silo (left meadow, economy)
+//   WAX WORKER    → swarms the Wax Block  (left meadow, economy)
+//   HONEY WORKER  → cluster around the Honey Jar (above hive, between zones)
+//   CANTOR        → tight cluster around the Honey Jar (drawing mana)
+//
+// Each zone is `centerX/Y` ± `spreadX/Y`. Bees pick a random spot inside
+// their zone at construction (once, stable) and use it as the wander
+// center for any idle behavior plus the destination for return flights.
+//
+// The buildings (Pollen Silo, Wax Block, Honey Jar) are NOT here — they
+// live at `WORLD.POLLEN_SILO`, `WORLD.WAX_BLOCK`, `WORLD.HONEY_JAR` and
+// the bees route to those coordinates explicitly when working. The park
+// anchors are just where bees idle BETWEEN trips, gathered loosely
+// around the relevant building so the swarm reads as "tending it."
+export const PARK_ANCHORS = {
+  forager: { x: WORLD.POLLEN_SILO.x + 8, y: WORLD.POLLEN_SILO.y + 18 },
+  'honey-worker': { x: WORLD.HONEY_JAR.x - 26, y: WORLD.HONEY_JAR.y + 28 },
+  'wax-worker': { x: WORLD.WAX_BLOCK.x, y: WORLD.WAX_BLOCK.y + 14 },
+  cantor: { x: WORLD.HIVE.x, y: WORLD.HIVE.y - 80 }, // honey jar above hive
+} as const;
+
+type ParkRole = keyof typeof PARK_ANCHORS;
+
+const PARK_ZONES: Record<
+  ParkRole,
+  { centerX: number; centerY: number; spreadX: number; spreadY: number }
+> = {
+  // Foragers swarm around the Pollen Silo where they drop their harvest.
+  forager: {
+    centerX: PARK_ANCHORS.forager.x,
+    centerY: PARK_ANCHORS.forager.y,
+    spreadX: 40,
+    spreadY: 12,
+  },
+  // Honey workers cluster around the Honey Jar — tight, since they share
+  // the jar with cantors. Slight downward bias so they read as the
+  // ground-floor staff vs. the cantors hovering above.
+  'honey-worker': {
+    centerX: PARK_ANCHORS['honey-worker'].x,
+    centerY: PARK_ANCHORS['honey-worker'].y,
+    spreadX: 18,
+    spreadY: 10,
+  },
+  // Wax workers cluster around the Wax Block.
+  'wax-worker': {
+    centerX: PARK_ANCHORS['wax-worker'].x,
+    centerY: PARK_ANCHORS['wax-worker'].y,
+    spreadX: 22,
+    spreadY: 10,
+  },
+  // Cantors orbit the honey jar — the wizards' coven, drawing mana
+  // straight from the reservoir they live next to.
+  cantor: {
+    centerX: PARK_ANCHORS.cantor.x,
+    centerY: PARK_ANCHORS.cantor.y + 20,
+    spreadX: 36,
+    spreadY: 14,
+  },
+};
 
 interface BeeStats {
   speedMul: number;
   harvestMul: number;
-  carryAmount: number;
 }
 
 // `synergy` is the count of same-role neighbor cells for this bee's home
-// cell — foragers convert it into flight speed, geomancers into damage.
+// cell — foragers convert it into flight speed, cantors into damage.
 function statsFor(role: BeeRole, state: GameState, synergy: number): BeeStats {
-  const base: BeeStats = { speedMul: 1, harvestMul: 1, carryAmount: 1 };
+  const base: BeeStats = { speedMul: 1, harvestMul: 1 };
   if (role === 'forager') {
     base.speedMul =
       Math.pow(1.15, getUpgradeTier(state, 'forager-swift-wings')) *
       (1 + TUNING.SYNERGY_FORAGER_SPEED * synergy);
     base.harvestMul = Math.pow(0.8, getUpgradeTier(state, 'forager-quick-forage'));
-    base.carryAmount = 1 + getUpgradeTier(state, 'forager-pollen-pouches');
-  } else if (role === 'geomancer') {
-    base.speedMul = Math.pow(1.15, getUpgradeTier(state, 'geomancer-heavy-swarm'));
+  } else if (role === 'wax-worker') {
+    base.speedMul = Math.pow(1.12, getUpgradeTier(state, 'waxworker-swift-haul'));
   }
-  // Cantor uses no flight speed multipliers — it hovers in place and casts.
+  // Cantors and honey-workers don't apply flight-speed multipliers.
   return base;
 }
 
-export type BeeRole = 'forager' | 'geomancer' | 'cantor';
+export type BeeRole =
+  | 'forager'
+  | 'honey-worker'
+  | 'wax-worker'
+  | 'cantor';
 
 export type BeeState =
   | 'idle'
@@ -47,13 +120,11 @@ export type BeeState =
   | 'flying-to-flower'
   | 'harvesting'
   | 'flying-home-with-pollen'
-  // geomancer (one-shot: spawn → climb to hover → bob → dive → bonk → bounce → expire)
-  | 'flying-to-hover'
-  | 'hovering'
-  | 'diving'
-  | 'striking-impact'
-  | 'bouncing'
-  | 'expired'
+  // worker (honey-worker or wax-worker): home → forager pile → home cycle
+  // where deposit converts one pollen dot into honey or wax respectively.
+  | 'worker-flying-out'
+  | 'worker-flying-home'
+  | 'worker-depositing'
   // cantor (persistent: rise to hover slot above home cell, then cycle
   // between hovering and casting sparks toward the dig site)
   | 'cantor-rising'
@@ -101,21 +172,6 @@ export class Bee {
   consecutiveIdleResets: number;
   tipPhaseMs: number;
   nextTipScheduledAtMs: number;
-  // Geomancer-only: tracks position offset relative to dig site so multiple
-  // geomancers don't stack into the same pixel.
-  swarmOffsetX: number;
-  swarmOffsetY: number;
-  // Geomancer-only: cached strike geometry. impactX/Y is the boulder-surface
-  // point the bee will ram. windupX/Y is the retreat point used during the
-  // windup phase before charging forward.
-  impactX: number;
-  impactY: number;
-  windupX: number;
-  windupY: number;
-  // Approach unit vector from windup point → impact point. Cached so the
-  // charge animation knows which direction "forward" is.
-  ramDirX: number;
-  ramDirY: number;
   // Cantor-only bookkeeping. `castTimerMs` counts down between successful
   // casts (when 0, attempt the next cast). `castCount` is the running total
   // of casts this bee has performed — used by Mana Sip to refund every Nth
@@ -124,6 +180,12 @@ export class Bee {
   castCount: number;
   hoverX: number;
   hoverY: number;
+  // Sky parking spot above the hive — per-bee fixed, used as the wander
+  // center for any idle state and the destination for return-to-base
+  // flights. Replaces the old "wander around the home cell" behavior so
+  // bees stop cluttering the honeycomb when zoomed in.
+  parkX: number;
+  parkY: number;
 
   constructor(
     role: BeeRole,
@@ -138,12 +200,22 @@ export class Bee {
     this.cellR = cellR;
     this.homeX = homeX;
     this.homeY = homeY;
-    this.x = homeX + (Math.random() - 0.5) * 20;
-    this.y = homeY + (Math.random() - 0.5) * 20;
+    // Every bee gets a stable parking spot inside its role's zone — a
+    // visible cluster around the role's anchor building. Picked once at
+    // construction so the bee always drifts back to the same pixel-cluster
+    // instead of jumping around the zone every idle tick. The comb cell
+    // is purely a population-slot bookkeeping device; bees never visit it.
+    const zone = PARK_ZONES[role];
+    this.parkX = zone.centerX + (Math.random() - 0.5) * zone.spreadX;
+    this.parkY = zone.centerY + (Math.random() - 0.5) * zone.spreadY;
+    // Spawn at the park spot directly — keeps freshly-bought workers from
+    // popping in inside the comb.
+    this.x = this.parkX;
+    this.y = this.parkY;
     this.prevX = this.x;
     this.prevY = this.y;
-    this.targetX = homeX;
-    this.targetY = homeY;
+    this.targetX = this.parkX;
+    this.targetY = this.parkY;
     this.state = 'idle';
     this.carrying = 'none';
     this.carryAmount = 0;
@@ -162,23 +234,13 @@ export class Bee {
     this.consecutiveIdleResets = 0;
     this.tipPhaseMs = 0;
     this.nextTipScheduledAtMs = 4000 + Math.random() * 3000;
-    // Spread impact points across the TOP face of the boulder. Bees will
-    // hover above this spot then dive bomb straight down into it.
-    // X within ±0.7R of center, Y on the upper half of the boulder.
-    this.swarmOffsetX = (Math.random() - 0.5) * 1.4 * 100;
-    this.swarmOffsetY = -30 - Math.random() * 30;
-    this.impactX = 0;
-    this.impactY = 0;
-    this.windupX = 0;
-    this.windupY = 0;
-    this.ramDirX = 1;
-    this.ramDirY = 0;
     this.castTimerMs = 0;
     this.castCount = 0;
-    // Cantor hover slot — a small lateral jitter so a cluster of cantors
-    // spreads out above the comb rather than stacking on one pixel.
-    this.hoverX = homeX + (Math.random() - 0.5) * 18;
-    this.hoverY = homeY + TUNING.CANTOR_HOVER_OFFSET_Y + (Math.random() - 0.5) * 10;
+    // Cantor's cast position — sits inside the park zone, slightly above
+    // the other bees parked there so multiple cantors stack cleanly along
+    // the top of the cloud rather than weaving through the drifters below.
+    this.hoverX = this.parkX;
+    this.hoverY = this.parkY - 10;
   }
 
   private flyToward(dtMs: number, state?: GameState): boolean {
@@ -207,15 +269,8 @@ export class Bee {
     // Quad.out ease in / out so flight ramps up from rest and slows on approach.
     const accelFrac = Math.min(1, this.flightAgeMs / 200);
     const accelEase = accelFrac * (2 - accelFrac);
-    let decelDist = 70;
-    let easeFloor = 0.18;
-    // Geomancers are eager attackers — they zoom up to the hover spot with
-    // minimal deceleration. Foragers keep the gentle approach.
-    if (this.role === 'geomancer') {
-      baseSpeed *= 1.5;
-      decelDist = 18;
-      easeFloor = 0.6;
-    }
+    const decelDist = 70;
+    const easeFloor = 0.18;
     const decelFrac = Math.min(1, dist / decelDist);
     const decelEase = decelFrac * (2 - decelFrac);
     const easeMul = Math.max(easeFloor, Math.min(accelEase, decelEase));
@@ -245,7 +300,10 @@ export class Bee {
   }
 
   private homePos(_world: World): { x: number; y: number } {
-    return { x: this.homeX, y: this.homeY };
+    // "Home" for movement purposes is the bee's sky parking spot, not its
+    // honeycomb cell. The cell position is kept on `homeX/homeY` for
+    // synergy bookkeeping but bees never physically visit it any more.
+    return { x: this.parkX, y: this.parkY };
   }
 
   // Stats for this bee, including the per-cell adjacency synergy bonus.
@@ -277,10 +335,10 @@ export class Bee {
 
     if (this.role === 'forager') {
       this.updateForager(dtMs, state, world);
-    } else if (this.role === 'cantor') {
-      this.updateCantor(dtMs, state, world);
+    } else if (this.role === 'honey-worker' || this.role === 'wax-worker') {
+      this.updateWorker(dtMs, state, world);
     } else {
-      this.updateGeomancer(dtMs, state, world);
+      this.updateCantor(dtMs, state, world);
     }
   }
 
@@ -291,6 +349,14 @@ export class Bee {
       case 'idle': {
         this.idleWaitMs -= dtMs;
         if (this.idleWaitMs <= 0) {
+          // Pollen Silo full → don't fly out. Bob at the park spot so the
+          // player can see "we have nowhere to put more pollen."
+          if (!pollenSiloHasRoom(state)) {
+            this.idleWaitMs = TUNING.WORKER_IDLE_RETRY_MS;
+            this.pickIdleTarget(world);
+            this.flyToward(dtMs, state);
+            break;
+          }
           const claimed = this.tryClaimFlower(state, world);
           if (claimed) {
             this.state = 'flying-to-flower';
@@ -346,10 +412,10 @@ export class Bee {
           }
           this.carrying = 'pollen';
           this.targetFlowerId = null;
-          const fs = this.stats(state);
-          this.carryAmount = fs.carryAmount;
-          const home = this.homePos(world);
-          this.setFlightTarget(home.x, home.y - 10);
+          this.carryAmount = 1;
+          // Fly to the Pollen Silo to drop off — NOT back to the park
+          // spot or the comb cell. The silo is the visible deposit point.
+          this.setFlightTarget(WORLD.POLLEN_SILO.x, WORLD.POLLEN_SILO.y - 6);
           this.state = 'flying-home-with-pollen';
           this.trailCooldownMs = 0;
         }
@@ -362,21 +428,32 @@ export class Bee {
           this.trailCooldownMs = 600 + Math.random() * 200;
         }
         if (this.flyToward(dtMs, state)) {
-          state.hive.pollen += this.carryAmount;
-          // Refine some of the deposit into honey/mana up to the cap. Excess
-          // pollen still sits in the upgrade pool — same deposit, two pools.
-          const refined = refineHoney(state, this.carryAmount);
-          world.particles.emit('pollenPuff', this.x, this.y, 4 + this.carryAmount * 2);
-          if (refined > 0) {
-            // Visual chain: pollen puff at the entrance + jar bump + sparkle
-            // at the jar. Reads as the deposit "becoming" mana in the jar.
-            world.emitManaRefine(refined);
+          // Drop pollen into the global silo. If the silo is full the
+          // deposit clamps to 0 — but `idle` already gates on
+          // `pollenSiloHasRoom`, so this is only an issue if the cap
+          // changed mid-flight (debug grants).
+          const added = addPollen(state, this.carryAmount);
+          world.particles.emit('pollenPuff', this.x, this.y, 6);
+          if (added > 0) {
+            // Extra puff at the silo's lip — completes the visual "the
+            // pollen went IN here" chain. Slightly above the bee so the
+            // dust reads as bouncing off the container rim.
+            world.particles.emit(
+              'pollenPuff',
+              WORLD.POLLEN_SILO.x,
+              WORLD.POLLEN_SILO.y - 12,
+              3,
+            );
           }
           this.pulseShake(state);
           this.carrying = 'none';
           this.carryAmount = 0;
           this.state = 'idle';
           this.idleWaitMs = 0;
+          // Return to the park spot — picked at construction, so the
+          // forager always drifts back to the same cluster around the silo.
+          this.targetX = this.parkX;
+          this.targetY = this.parkY;
         }
         break;
       }
@@ -420,185 +497,116 @@ export class Bee {
     this.targetFlowerId = null;
   }
 
-  // -------------------- Geomancer --------------------
-  // One-shot dive-bomb lifecycle:
-  //   spawn → flying-to-hover (climb to a hover spot above the boulder)
-  //         → hovering        (bob in mid-air, build anticipation)
-  //         → diving          (plummet straight DOWN into the boulder)
-  //         → striking-impact (contact frame — damage + dust burst)
-  //         → bouncing        (knocked back up and away, arcing out)
-  //         → expired         (hive queues a respawn)
+  // -------------------- Worker (honey-worker / wax-worker) --------------------
+  //
+  // Persistent bee that lives at its building (Honey Jar for honey workers,
+  // Wax Block for wax workers). Cycle: park spot → Pollen Silo (pick up
+  // one pollen) → home building (deposit, convert) → park spot. Gates:
+  //  - No pollen in the silo: bob at park, retry soon.
+  //  - Output container at cap: bob at park, retry soon — visible "we
+  //    have nowhere to put more honey/wax" tell.
+  //
+  //   idle              → check gates; if clear, fly to silo
+  //   worker-flying-out → arrive at silo, pluck one pollen if available
+  //   worker-flying-home→ fly to home building (Honey Jar or Wax Block)
+  //   worker-depositing → brief bob, then add honey/wax and loop
 
-  private updateGeomancer(dtMs: number, state: GameState, world: World): void {
-    const siteActive = state.digSite.state === 'active';
-
+  private updateWorker(dtMs: number, state: GameState, world: World): void {
     switch (this.state) {
-      case 'idle-swarm': {
-        // Out of mana — drift in a small wandering loop near the hive until
-        // the retry timer expires, then drop back to idle to check honey.
-        this.tickIdleSwarm(dtMs, state, world);
-        break;
-      }
       case 'idle': {
-        if (siteActive) {
-          // Mana gate. A geomancer needs honey to cast its dive spell.
-          // Pay up front so the player sees the reservoir drop the instant
-          // the bee commits — and so an empty reservoir parks the bee in
-          // an idle swarm instead of letting it fly out unfunded.
-          if (!spendHoney(state, manaCostFor('geomancer'))) {
-            this.enterIdleSwarm(world);
-            break;
-          }
-          // Mana flows out of the jar toward the bee that just committed
-          // to fly. Visual chain: jar squish → orb to bee → bee dives.
-          world.emitManaDraw(this.x, this.y);
-          const site = world.digSite;
-          if (site) {
-            const sp = site.strikePoint();
-            // Cache impact point (where the dive lands) and hover point
-            // (directly above the impact, in the air).
-            this.impactX = sp.x + this.swarmOffsetX;
-            this.impactY = sp.y + this.swarmOffsetY;
-            const HOVER_HEIGHT = 90;
-            this.windupX = this.impactX;
-            this.windupY = this.impactY - HOVER_HEIGHT;
-            // Dive direction is straight down.
-            this.ramDirX = 0;
-            this.ramDirY = 1;
-            // Fly to the hover point with a brisk approach (no late decel
-            // sag — geomancers are eager). flyToward still arrives cleanly
-            // because we override the easing for geomancer flight below.
-            this.setFlightTarget(this.windupX, this.windupY);
-            this.state = 'flying-to-hover';
-          } else {
-            this.flyToward(dtMs, state);
-          }
-        } else {
-          this.idleWaitMs -= dtMs;
-          if (this.idleWaitMs <= 0) {
-            this.pickIdleTarget(world);
-            this.idleWaitMs = TUNING.IDLE_WANDER_DURATION_MS;
-          }
+        this.idleWaitMs -= dtMs;
+        if (this.idleWaitMs > 0) {
           this.flyToward(dtMs, state);
-        }
-        break;
-      }
-      case 'flying-to-hover': {
-        if (!siteActive) {
-          this.state = 'expired';
-          world.particles.emit('crashDust', this.x, this.y, 2);
           break;
         }
+        // Output-at-cap gate. Honey workers idle when the jar is full;
+        // wax workers idle when the block is full. This is the visible
+        // "you need to spend" beat.
+        const outputFull =
+          this.role === 'honey-worker'
+            ? state.hive.honey >= state.hive.honeyCap
+            : state.hive.wax >= waxCap(state);
+        if (outputFull) {
+          this.idleWaitMs = TUNING.WORKER_IDLE_RETRY_MS;
+          this.pickIdleTarget(world);
+          this.flyToward(dtMs, state);
+          break;
+        }
+        // No pollen available → bob and re-check.
+        if (!pollenAvailable(state)) {
+          this.idleWaitMs = TUNING.WORKER_IDLE_RETRY_MS;
+          this.pickIdleTarget(world);
+          this.flyToward(dtMs, state);
+          break;
+        }
+        // Fly to the Pollen Silo. Slight per-bee jitter on the approach
+        // so multiple workers don't pile on the exact same pixel.
+        this.setFlightTarget(
+          WORLD.POLLEN_SILO.x + this.seed * 6,
+          WORLD.POLLEN_SILO.y - 6,
+        );
+        this.state = 'worker-flying-out';
+        this.consecutiveIdleResets = 0;
+        break;
+      }
+      case 'worker-flying-out': {
         if (this.flyToward(dtMs, state)) {
-          this.state = 'hovering';
-          this.workTimer = 380; // mid-air anticipation window
+          // Try to pluck one pollen from the silo. May have been emptied
+          // mid-flight by another worker — if so, fly back empty and try
+          // again next idle. Visible "missed it" beat without locking up.
+          if (takePollen(state, 1)) {
+            this.carrying = 'pollen';
+            this.carryAmount = 1;
+            world.particles.emit('pollenPuff', this.x, this.y, 3);
+            this.pulseShake(state, 80);
+          }
+          // Aim for the building, slight jitter so workers don't stack.
+          const dest =
+            this.role === 'honey-worker' ? WORLD.HONEY_JAR : WORLD.WAX_BLOCK;
+          this.setFlightTarget(dest.x + this.seed * 5, dest.y + 6);
+          this.state = 'worker-flying-home';
         }
         break;
       }
-      case 'hovering': {
-        if (!siteActive) {
-          this.state = 'expired';
-          break;
+      case 'worker-flying-home': {
+        if (this.flyToward(dtMs, state)) {
+          this.state = 'worker-depositing';
+          this.workTimer = TUNING.WORKER_DEPOSIT_MS;
         }
+        break;
+      }
+      case 'worker-depositing': {
         this.workTimer -= dtMs;
-        // Bob in mid-air with a gentle vertical sway + tiny horizontal
-        // jitter. Sells the "lining up the shot" beat.
-        this.prevX = this.x;
-        this.prevY = this.y;
-        const bobPhase = this.workTimer / 110;
-        this.x = this.windupX + Math.sin(bobPhase * 0.8) * 2;
-        this.y = this.windupY + Math.sin(bobPhase) * 4;
-        // Last 90ms — bee tenses up, rises a hair higher for the snap.
-        if (this.workTimer < 90) {
-          const tense = 1 - this.workTimer / 90;
-          this.y -= tense * 5;
-        }
         if (this.workTimer <= 0) {
-          this.state = 'diving';
-          this.workTimer = 180; // dive duration
+          if (this.carrying === 'pollen') {
+            if (this.role === 'honey-worker') {
+              const added = addHoney(state, 1);
+              if (added > 0) world.emitManaRefine(added);
+            } else {
+              const added = addWax(state, waxPerDelivery(state));
+              if (added > 0) {
+                world.particles.emit(
+                  'sparkle',
+                  WORLD.WAX_BLOCK.x,
+                  WORLD.WAX_BLOCK.y - 4,
+                  3,
+                );
+              }
+            }
+            this.carrying = 'none';
+            this.carryAmount = 0;
+          }
+          this.pulseShake(state, 90);
+          // Drift back to the park spot for a beat before the next trip.
+          this.setFlightTarget(this.parkX, this.parkY);
+          this.state = 'idle';
+          this.idleWaitMs = 0;
         }
-        break;
-      }
-      case 'diving': {
-        if (!siteActive) {
-          this.state = 'expired';
-          break;
-        }
-        this.workTimer -= dtMs;
-        // Cubic ease-in from the hover point straight down to impact.
-        const total = 180;
-        const t = Math.max(0, Math.min(1, 1 - this.workTimer / total));
-        const eased = t * t * t;
-        this.prevX = this.x;
-        this.prevY = this.y;
-        this.x = this.windupX + (this.impactX - this.windupX) * eased;
-        this.y = this.windupY + (this.impactY - this.windupY) * eased;
-        // Speed lines streaming behind the diving bee.
-        if (Math.random() < 0.6) {
-          world.particles.emit('crashDust', this.x, this.y - 4, 1);
-        }
-        if (this.workTimer <= 0) {
-          // BONK. Snap exactly to impact point, apply damage, burst.
-          this.x = this.impactX;
-          this.y = this.impactY;
-          const synergy = cellSynergy(state.hive, this.cellQ, this.cellR);
-          const dmg =
-            geomancerDamagePerStrike(state) *
-            (1 + TUNING.SYNERGY_GEOMANCER_DAMAGE * synergy);
-          state.digSite.hp = Math.max(0, state.digSite.hp - dmg);
-          world.particles.emit('crashDust', this.impactX, this.impactY + 6, 12);
-          world.particles.emit('sparkle', this.impactX, this.impactY, 3);
-          this.pulseShake(state, 180);
-          this.state = 'striking-impact';
-          this.workTimer = 70; // very brief squashed-to-rock pose
-        }
-        break;
-      }
-      case 'striking-impact': {
-        this.workTimer -= dtMs;
-        // Pinned to impact point — view shows the splat squash.
-        this.prevX = this.x;
-        this.prevY = this.y;
-        this.x = this.impactX;
-        this.y = this.impactY;
-        if (this.workTimer <= 0) {
-          // Kick off the bounce: pick a tumble velocity up and sideways.
-          // Side direction biased by which half of the boulder we're on so
-          // bees fan out instead of all bouncing the same way.
-          this.state = 'bouncing';
-          this.workTimer = 360;
-          // Stash bounce velocity in workTimer-adjacent fields. Reuse
-          // ramDirX/Y as the tumble direction (up and outward).
-          const sideways = Math.sign(this.swarmOffsetX || (Math.random() - 0.5));
-          this.ramDirX = sideways * (0.7 + Math.random() * 0.5);
-          this.ramDirY = -(1.6 + Math.random() * 0.6); // strongly upward
-        }
-        break;
-      }
-      case 'bouncing': {
-        this.workTimer -= dtMs;
-        // Ballistic tumble — initial velocity from impact, gravity drags
-        // the bee back down. We integrate position directly here.
-        this.prevX = this.x;
-        this.prevY = this.y;
-        const dt = dtMs / 1000;
-        // ramDirX/Y are unitless "knockback" magnitudes. Convert to px/sec.
-        const SPEED = 160;
-        this.x += this.ramDirX * SPEED * dt;
-        this.y += this.ramDirY * SPEED * dt;
-        // Gravity-like drag pulls the upward velocity down over the bounce.
-        this.ramDirY += 4 * dt;
-        if (this.workTimer <= 0) {
-          this.state = 'expired';
-          world.particles.emit('crashDust', this.x, this.y + 4, 2);
-        }
-        break;
-      }
-      case 'expired': {
         break;
       }
       default: {
-        this.state = 'expired';
+        this.state = 'idle';
+        this.idleWaitMs = 0;
       }
     }
   }
@@ -672,7 +680,7 @@ export class Bee {
           const refundEvery = cantorRefundEveryNCasts(state);
           this.castCount += 1;
           if (refundEvery > 0 && this.castCount % refundEvery === 0) {
-            refineHoney(state, 1);
+            addHoney(state, 1);
           }
 
           // Apply damage immediately to the dig site. The flying spark is
@@ -681,7 +689,7 @@ export class Bee {
           const synergy = cellSynergy(state.hive, this.cellQ, this.cellR);
           const dmg =
             cantorDamagePerSpark(state) *
-            (1 + TUNING.SYNERGY_GEOMANCER_DAMAGE * synergy);
+            (1 + TUNING.SYNERGY_CANTOR_DAMAGE * synergy);
           state.digSite.hp = Math.max(0, state.digSite.hp - dmg);
 
           // Visual spark heading toward the rock.
@@ -748,12 +756,13 @@ export class Bee {
     this.targetY = home.y - 10;
   }
 
-  private pickIdleTarget(world: World): void {
-    const home = this.homePos(world);
+  private pickIdleTarget(_world: World): void {
+    // Drift inside the bee's sky parking zone. Per-bee parkX/parkY is the
+    // center; a small wander radius on top of it adds the buzz.
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.random() * IDLE_WANDER_RADIUS;
-    this.targetX = home.x + Math.cos(angle) * radius;
-    this.targetY = home.y + Math.sin(angle) * radius * 0.6 - 15;
+    this.targetX = this.parkX + Math.cos(angle) * radius;
+    this.targetY = this.parkY + Math.sin(angle) * radius * 0.6;
   }
 
   private bumpIdleConfusion(world: World): void {

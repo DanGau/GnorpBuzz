@@ -6,9 +6,8 @@ import { ResetButton } from './ResetButton';
 import { JournalModal } from './JournalModal';
 import { EndBanner } from './EndBanner';
 
-// Upgrade rows used to live in a docked ColonyPanel here. They now live
-// inside the underground chambers (`UndergroundView` + `ChamberRadialView`).
-// See `docs/underground.md`.
+// Upgrade rows are not a docked HTML panel — they're contextual world-space
+// panels (`UpgradePanelView`) that open when you click a resource building.
 export class UI {
   private widgets: { update(): void }[];
 

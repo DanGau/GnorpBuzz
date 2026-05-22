@@ -4,6 +4,7 @@ import {
   TUNING,
   totalBees,
   totalPollen,
+  totalWax,
   countRole,
   nextWorkerCost,
   cellCost,
@@ -27,12 +28,16 @@ import {
 import { serialize, deserialize } from './save';
 
 describe('hive cell model', () => {
-  it('starts with three free empty cells, no workers, no queen', () => {
+  it('starts with four free empty cells, no workers, no resources', () => {
     const s = createInitialState();
-    expect(s.hive.cells).toHaveLength(3);
+    expect(s.hive.cells).toHaveLength(4);
     expect(s.hive.cells.every((c) => c.role === null)).toBe(true);
     expect(totalBees(s)).toBe(0);
     expect(totalPollen(s)).toBe(0);
+    expect(totalWax(s)).toBe(0);
+    expect(s.hive.honey).toBe(0);
+    expect(s.hive.pollenCap).toBeGreaterThan(0);
+    expect(s.hive.waxCap).toBeGreaterThan(0);
   });
 
   it('starts with flowers in the meadow at full bloom', () => {
@@ -64,7 +69,7 @@ describe('cell actions', () => {
   it('the first worker must be a Forager', () => {
     const s = createInitialState();
     expect(mustPlaceForager(s)).toBe(true);
-    const bad = assignCell(s, 0, 0, 'geomancer');
+    const bad = assignCell(s, 0, 0, 'cantor');
     expect(bad.ok).toBe(false);
     expect(bad.reason).toMatch(/Forager/);
     expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
@@ -77,29 +82,29 @@ describe('cell actions', () => {
     expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
     expect(countRole(s, 'forager')).toBe(1);
     expect(nextWorkerCost(s, 'forager')).toBeGreaterThan(0);
-    // Geomancer is still free — cost is per-role, and the first-forager
+    // Cantor is still free — cost is per-role, and the first-forager
     // requirement is now satisfied.
-    expect(nextWorkerCost(s, 'geomancer')).toBe(0);
-    expect(assignCell(s, -1, 1, 'geomancer').ok).toBe(true);
+    expect(nextWorkerCost(s, 'cantor')).toBe(0);
+    expect(assignCell(s, -1, 1, 'cantor').ok).toBe(true);
   });
 
-  it('placing a second worker of a role requires pollen', () => {
+  it('placing a second worker of a role requires wax', () => {
     const s = createInitialState();
     assignCell(s, 0, 0, 'forager'); // free
     const result = assignCell(s, 0, 1, 'forager');
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/pollen/);
-    s.hive.pollen = 100;
+    expect(result.reason).toMatch(/wax/);
+    s.hive.wax = 100;
     const cost = nextWorkerCost(s, 'forager');
     expect(assignCell(s, 0, 1, 'forager').ok).toBe(true);
-    expect(s.hive.pollen).toBe(100 - cost);
+    expect(s.hive.wax).toBe(100 - cost);
   });
 
   it('cell assignments are permanent — a filled cell cannot be reassigned', () => {
     const s = createInitialState();
-    s.hive.pollen = 100;
+    s.hive.wax = 100;
     assignCell(s, 0, 0, 'forager');
-    const reassign = assignCell(s, 0, 0, 'geomancer');
+    const reassign = assignCell(s, 0, 0, 'cantor');
     expect(reassign.ok).toBe(false);
     expect(reassign.reason).toMatch(/already/);
     expect(cellAt(s.hive, 0, 0)?.role).toBe('forager');
@@ -107,7 +112,7 @@ describe('cell actions', () => {
 
   it('buys a frontier cell; cost scales with hex distance from center', () => {
     const s = createInitialState();
-    s.hive.pollen = 100000;
+    s.hive.wax = 100000;
     const frontier = buyableCells(s.hive);
     expect(frontier.length).toBeGreaterThan(0);
     const target = frontier[0];
@@ -121,13 +126,13 @@ describe('cell actions', () => {
 
   it('rejects buying a cell that is not on the frontier', () => {
     const s = createInitialState();
-    s.hive.pollen = 100000;
+    s.hive.wax = 100000;
     expect(buyCell(s, 9, 9).ok).toBe(false);
   });
 
   it('cannot grow the comb past the radius cap', () => {
     const s = createInitialState();
-    s.hive.pollen = 100000;
+    s.hive.wax = 100000;
     // Greedily buy every reachable cell.
     for (let i = 0; i < 200; i++) {
       const frontier = buyableCells(s.hive);
@@ -142,15 +147,24 @@ describe('cell actions', () => {
 
   it('counts same-role neighbors as synergy', () => {
     const s = createInitialState();
-    s.hive.pollen = 1000;
+    s.hive.wax = 1000;
     // Starting cells (-1,1) and (0,1) are adjacent to each other.
     assignCell(s, -1, 1, 'forager');
     assignCell(s, 0, 1, 'forager');
     expect(cellSynergy(s.hive, -1, 1)).toBe(1);
     expect(cellSynergy(s.hive, 0, 1)).toBe(1);
     // A worker with no same-role neighbor has zero synergy.
-    assignCell(s, 0, 0, 'geomancer');
+    assignCell(s, 0, 0, 'cantor');
     expect(cellSynergy(s.hive, 0, 0)).toBe(0);
+  });
+
+  it('honey-worker and wax-worker are placeable after a forager exists', () => {
+    const s = createInitialState();
+    assignCell(s, 0, 0, 'forager'); // free
+    expect(assignCell(s, -1, 1, 'honey-worker').ok).toBe(true);
+    expect(cellAt(s.hive, -1, 1)?.role).toBe('honey-worker');
+    expect(assignCell(s, 0, 1, 'wax-worker').ok).toBe(true);
+    expect(cellAt(s.hive, 0, 1)?.role).toBe('wax-worker');
   });
 });
 
@@ -207,12 +221,14 @@ describe('dig site progression', () => {
 describe('save', () => {
   it('round-trips state', () => {
     const s = createInitialState();
-    s.hive.pollen = 7;
+    s.hive.wax = 7;
+    s.hive.pollen = 3;
     assignCell(s, 0, 0, 'forager');
     s.flowers[0].yieldRemaining = 2;
     s.digSite.hp = 12;
     const restored = deserialize(serialize(s));
-    expect(restored.hive.pollen).toBe(7);
+    expect(restored.hive.wax).toBe(7);
+    expect(restored.hive.pollen).toBe(3);
     expect(cellAt(restored.hive, 0, 0)?.role).toBe('forager');
     expect(restored.flowers[0].yieldRemaining).toBe(2);
     expect(restored.digSite.hp).toBe(12);
@@ -222,7 +238,7 @@ describe('save', () => {
     const legacy = JSON.stringify({ hives: [], flowers: [], tick: 5 });
     const restored = deserialize(legacy);
     expect(restored.hive).toBeDefined();
-    expect(restored.hive.cells.length).toBe(3);
+    expect(restored.hive.cells.length).toBe(4);
     expect(restored.tick).toBe(0);
   });
 });

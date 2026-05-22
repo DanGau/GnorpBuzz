@@ -21,7 +21,7 @@ geomancer cell                cantor cell
 dig site HP drops, eventually reveals an artifact.
 ```
 
-The two pools — pollen (uncapped, for upgrades) and honey (capped, for spells) — share a single deposit event but have very different shapes. Honey forces casters into idle swarms when foragers can't keep up; pollen quietly accrues for the next chamber dig or upgrade purchase.
+> **Outdated:** this doc describes the original single-pool deposit model. The current economy is pollen → worker → {honey, wax}, all capped, with bees routing to above-ground buildings. See `docs/economy-sketch.md` and `docs/game-design.md` for the live design.
 
 ## Buildings
 

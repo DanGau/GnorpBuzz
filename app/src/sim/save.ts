@@ -1,15 +1,19 @@
 import type { GameState } from './state';
 import { createInitialState } from './state';
 
-// Bumped to v6 — wizard reframing: honey/mana reservoir on the hive, cantor
-// role, geomancer rename. Older saves are simply ignored.
-const STORAGE_KEY = 'gnorpbuzz.save.v6';
+// Bumped to v10 — geomancer role removed; a v9 save could hold a geomancer
+// cell whose role is no longer valid, so drop older saves.
+const STORAGE_KEY = 'gnorpbuzz.save.v10';
 const LEGACY_KEYS = [
   'gnorpbuzz.save.v1',
   'gnorpbuzz.save.v2',
   'gnorpbuzz.save.v3',
   'gnorpbuzz.save.v4',
   'gnorpbuzz.save.v5',
+  'gnorpbuzz.save.v6',
+  'gnorpbuzz.save.v7',
+  'gnorpbuzz.save.v8',
+  'gnorpbuzz.save.v9',
 ];
 
 export function serialize(state: GameState): string {
@@ -28,9 +32,13 @@ export function deserialize(blob: string): GameState {
 
   const merged = { ...base, ...parsed } as GameState;
 
-  // Defensive defaults for honey reservoir — older shapes may lack these.
+  // Defensive defaults — older shapes may lack these fields.
   if (typeof merged.hive.honey !== 'number') merged.hive.honey = 0;
   if (typeof merged.hive.honeyCap !== 'number') merged.hive.honeyCap = base.hive.honeyCap;
+  if (typeof merged.hive.pollen !== 'number') merged.hive.pollen = 0;
+  if (typeof merged.hive.pollenCap !== 'number') merged.hive.pollenCap = base.hive.pollenCap;
+  if (typeof merged.hive.wax !== 'number') merged.hive.wax = 0;
+  if (typeof merged.hive.waxCap !== 'number') merged.hive.waxCap = base.hive.waxCap;
 
   // Defensive defaults — fields that may be missing from partial saves.
   if (!merged.flowers) merged.flowers = base.flowers;
@@ -42,7 +50,6 @@ export function deserialize(blob: string): GameState {
   if (!merged.journal)
     merged.journal = { entries: [], pending: false, dismissedCount: 0 };
   if (!merged.upgrades) merged.upgrades = {};
-  if (!merged.chambers) merged.chambers = {};
   if (!merged.ascent) merged.ascent = { phase: 'none', timer: 0 };
 
   return merged;
