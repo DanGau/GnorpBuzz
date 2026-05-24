@@ -7,6 +7,8 @@ import {
   nextWorkerCost,
   totalWax,
   spendWax,
+  currencyBalance,
+  spendCurrency,
   UPGRADE_DEFS,
   getUpgradeTier,
   isUpgradeUnlocked,
@@ -92,6 +94,7 @@ export function dismissArtifact(state: GameState): ActionResult {
   state.digSite.maxHp = spec.nextSiteMaxHp;
   state.digSite.hp = spec.nextSiteMaxHp;
   state.digSite.state = 'active';
+  state.digSite.dropBudget = 0;
   return { ok: true };
 }
 
@@ -109,10 +112,10 @@ export function buyUpgrade(state: GameState, id: UpgradeId): ActionResult {
   }
   const cost = nextUpgradeCost(state, id);
   if (cost <= 0) return { ok: false, reason: `Already at max tier` };
-  if (totalWax(state) < cost) {
-    return { ok: false, reason: `Need ${cost} wax` };
+  if (currencyBalance(state, def.currency) < cost) {
+    return { ok: false, reason: `Need ${cost} ${def.currency}` };
   }
-  spendWax(state, cost);
+  spendCurrency(state, def.currency, cost);
   state.upgrades[id] = getUpgradeTier(state, id) + 1;
   return { ok: true };
 }

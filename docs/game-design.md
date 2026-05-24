@@ -30,9 +30,10 @@ above-ground building around the hive. The buildings ARE the dashboard:
 
 | Resource | Container | Cap | Source | Used for |
 |----------|-----------|-----|--------|----------|
-| **Pollen** | Pollen Silo (left, meadow ground) | 20 | Foragers harvest meadow flowers; one dot per trip | Raw input only — Workers pick it up to refine |
-| **Honey** (mana) | Honey Jar (above the hive, between economy and combat) | 10 | Honey Workers deliver pollen from the Silo | Spell casts (Cantor 1) |
-| **Wax** | Wax Block (left, meadow ground) | 40 | Wax Workers deliver pollen from the Silo | All upgrades, cell unlocks, worker hires |
+| **Pollen** | Pollen Silo (under-hive, left of center) | 20 | Foragers harvest meadow flowers; one dot per trip | Raw input only — Workers pick it up to refine |
+| **Honey** (mana) | Honey Jar (above the hive) | 10 | Honey Workers deliver pollen from the Silo | Spell casts (Cantor 1) |
+| **Wax** | Wax Block (left meadow, elevated) | 40 | Wax Workers deliver pollen from the Silo | Worker/cell role upgrades, cell unlocks, worker hires |
+| **Fertilizer** | Fertilizer Bin (under-hive, right of center) | 100 | Foragers haul fertilizer drops from the rock pile | Permanent meadow upgrades (Rich Soil, Long Bloom, Quick Sprout) |
 
 **Bees never use the comb as a destination.** The comb is a population
 dial: how many of each role exist. Every bee homes to a *building*, not a
@@ -49,6 +50,70 @@ workers bob at the jar. Wax at cap → wax workers bob at the block. Silo
 full → foragers loiter at the silo instead of flying out for more.
 
 See `docs/economy-sketch.md` for the full design history.
+
+## Rock Drops (loot economy)
+
+When a cantor strikes the boulder, the impact knocks loose **drops** that
+arc into a pile at the boulder's base. Drops come in three flavors with
+loot-box rarity:
+
+| Kind | Rarity | What it does |
+|------|--------|--------------|
+| **Seed** (T1 / T2 / T3) | Common (~75%) | Forager hauls it back, plants it on the nearest empty meadow tile; grows into a flower of the seed's tier (T1 short-lived/normal, T2 longer/+yield, T3 long/big yield). |
+| **Fertilizer** | Uncommon (~22%) | Forager hauls it to the **Fertilizer Bin**; spent on permanent meadow/flower upgrades. |
+| **Fossilized Honey** | Rare (~3%) | Auto-applies on spawn — instantly fills the Honey Jar. Never becomes a physical drop entity. The dopamine is the instant fill. |
+
+Drops-per-rock is **damage-proportional**: each whole point of damage dealt
+to the rock spawns one drop. So a tier-1 rock (40 HP) yields ~40 drops over
+its lifetime, and the bigger rocks rain accordingly more loot.
+
+**Forager dual-task.** Foragers spawn-park between the two under-hive intake
+buildings (Pollen Silo + Fertilizer Bin). On idle they pick the **nearest
+pending task**: fly LEFT to a meadow flower for pollen, or fly RIGHT to the
+pile to haul a seed (plant it) or fertilizer (deposit it). The geometry is
+what makes the dual-task tension feel emergent — geographically equidistant
+from the start, demand on either side pulls the swarm.
+
+**The pile is capped at 250 uncollected drops.** Past the cap, the boulder
+becomes **invincible** — cantors stop casting (no wasted mana) until
+foragers haul the pile down. This turns "over-damaging while your foragers
+fall behind" into a self-correcting jam rather than a punishment.
+
+**Real physics on the pile.** Drops are circle colliders with gravity,
+restitution, friction, sleep-when-supported, and a right-edge wall.
+They mound up in the bottom-right corner of the meadow against the
+world edge — what you see is the literal physical pile, not a tally.
+
+**Planting is left-field only.** Foragers plant hauled seeds at the
+nearest empty meadow tile, and meadow tiles only exist on the LEFT side
+of the field (where the wild flowers already grow). The right side of
+the meadow is intentionally empty grass — the boulder's territory.
+
+**Flowers wither.** Once a planted sapling opens, it lives for a
+tier-dependent lifespan (T1: 60s, T2: 120s, T3: 240s) and then
+disappears silently. The "harvest before it rots" pressure is what
+makes player attention scarce.
+
+**Natural release valve.** If the meadow drops below a baseline (4
+flowers), a slow trickle of T1 flowers spawns on its own (~one every
+22s) at random empty tiles — enough to recover a soft-locked colony,
+not enough to be a primary supply.
+
+## Fertilizer Upgrades
+
+Clicking the **Fertilizer Bin** opens a panel of three permanent meadow
+buffs, each spent in fertilizer (🌿):
+
+| Upgrade | Effect | Cost (base · growth) |
+|---------|--------|----------------------|
+| **Rich Soil** | +25% pollen yield per flower per tier (max 4) | 8 · 1.7× |
+| **Long Bloom** | +30% flower lifespan per tier (max 4) | 6 · 1.6× |
+| **Quick Sprout** | −20% sapling growth time per tier (max 3) | 10 · 1.8× |
+
+These are symmetric with the wax upgrades but compound the meadow's
+output rather than the workers'. A maxed colony has flowers that yield
+big, live long, and grow fast — turning the rock-drop economy from a
+slow trickle into the main pollen pipeline.
 
 ## Core Loop
 
@@ -88,6 +153,7 @@ Upgrades are **contextual panels** that open when you click the world object a r
 | **Pollen Silo** | Forager (Swift Wings, Quick Forage) |
 | **Honey Jar** | Cantor (Quicker Cantrip, Twin Spark, Mana Sip) |
 | **Wax Block** | Wax Worker (Swift Haul, Rich Combs, Deep Coffers) |
+| **Fertilizer Bin** | Fertilizer (Rich Soil, Long Bloom, Quick Sprout) |
 
 Clicking a building also pans the camera to a side-on "economy" framing of the three refinery buildings. (There is no underground — that view was removed.)
 

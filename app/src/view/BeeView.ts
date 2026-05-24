@@ -1,6 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import type { World } from '../world/World';
-import type { Bee, BeeRole } from '../world/Bee';
+import type { Bee, BeeRole, BeeCarrying } from '../world/Bee';
 import { TIP_DURATION_MS } from '../world/Bee';
 
 interface BeeSprite {
@@ -116,7 +116,7 @@ export class BeeView {
       sprite.carry.rotation = 0;
       sprite.carry.scale.set(1, 1);
 
-      this.drawCarry(sprite.carry, bee.carrying, bee.role);
+      this.drawCarry(sprite.carry, bee.carrying, bee.carryAmount, bee.role, bee.carrySeedTier);
     }
   }
 
@@ -143,15 +143,97 @@ export class BeeView {
 
   private drawCarry(
     g: Graphics,
-    carrying: 'none' | 'pollen',
+    carrying: BeeCarrying,
+    amount: number,
     role: BeeRole,
+    seedTier: 1 | 2 | 3,
   ): void {
     void role;
     g.clear();
     if (carrying === 'none') return;
     if (carrying === 'pollen') {
-      g.circle(0, 4, 3).fill(0xf5d166);
-      g.circle(-1, 3, 1).fill({ color: 0xfff2bf, alpha: 0.6 });
+      // Each unit of pollen the bee is hauling is drawn as a literal
+      // grain — a forager returning with 5 looks like a small clutch
+      // strapped under the body, a wax-worker hauling 3 is visibly less
+      // than that, and a honey-worker with 1 is a single dot. Slots are
+      // packed in a small triangle so the cluster reads as one bundle
+      // rather than a row of unrelated dots.
+      const n = Math.max(1, Math.min(8, amount));
+      const slots = pollenCarrySlots(n);
+      for (const s of slots) {
+        g.circle(s.x, 4 + s.y, 1.5).fill(0xf5d166);
+        g.circle(s.x - 0.4, 3.5 + s.y, 0.55).fill({
+          color: 0xfff2bf,
+          alpha: 0.85,
+        });
+      }
+      return;
+    }
+    if (carrying === 'seed') {
+      // Tier-tinted teardrop slung below the bee; matches the colors in
+      // RockDropView so a hauling forager visibly carries "the same seed
+      // that fell off the rock".
+      const tint = seedTier === 3 ? 0xc89a2a : seedTier === 2 ? 0x6a8a2a : 0x5a3a14;
+      const glint = seedTier === 3 ? 0xffe890 : seedTier === 2 ? 0xb8d860 : 0x8a6a2a;
+      g.ellipse(0, 5, 2.6, 3.2).fill(tint);
+      g.ellipse(-0.6, 4.4, 1.0, 1.4).fill({ color: glint, alpha: 0.8 });
+      if (seedTier === 3) g.circle(0, 5, 5).fill({ color: 0xffe890, alpha: 0.2 });
+      return;
+    }
+    if (carrying === 'fertilizer') {
+      g.ellipse(0, 5, 3.0, 2.4).fill(0x4a3210);
+      g.circle(0.6, 4.0, 0.9).fill({ color: 0x6e8c2a, alpha: 0.95 });
+      g.circle(-0.5, 3.8, 0.5).fill({ color: 0x8aa83a, alpha: 0.85 });
+      return;
+    }
+  }
+}
+
+// Cluster layout for the carry sprite — a small triangular bundle that
+// scales gracefully up to 8 grains. Beyond 8 we'd want a different
+// visual; for now amounts are bounded by recipe sizes.
+function pollenCarrySlots(n: number): { x: number; y: number }[] {
+  const r = 1.7; // inter-grain spacing
+  // Layouts hand-tuned for small n so the cluster sits centered under
+  // the bee body and reads cleanly.
+  switch (n) {
+    case 1:
+      return [{ x: 0, y: 0 }];
+    case 2:
+      return [
+        { x: -r * 0.8, y: 0 },
+        { x: r * 0.8, y: 0 },
+      ];
+    case 3:
+      return [
+        { x: -r, y: r * 0.4 },
+        { x: r, y: r * 0.4 },
+        { x: 0, y: -r * 0.5 },
+      ];
+    case 4:
+      return [
+        { x: -r, y: r * 0.5 },
+        { x: r, y: r * 0.5 },
+        { x: -r * 0.5, y: -r * 0.5 },
+        { x: r * 0.5, y: -r * 0.5 },
+      ];
+    case 5:
+      return [
+        { x: -r * 1.2, y: r * 0.5 },
+        { x: 0, y: r * 0.5 },
+        { x: r * 1.2, y: r * 0.5 },
+        { x: -r * 0.6, y: -r * 0.6 },
+        { x: r * 0.6, y: -r * 0.6 },
+      ];
+    default: {
+      // Generic ring + center fallback for 6-8.
+      const out: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+      const ring = n - 1;
+      for (let i = 0; i < ring; i++) {
+        const t = (i / ring) * Math.PI * 2;
+        out.push({ x: Math.cos(t) * r * 1.3, y: Math.sin(t) * r * 0.8 });
+      }
+      return out;
     }
   }
 }

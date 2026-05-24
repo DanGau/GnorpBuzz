@@ -38,12 +38,25 @@ export class World {
   reconcile(state: GameState): void {
     this.hive.reconcile(state.hive);
 
-    if (this.flowers.size === 0 || this.flowers.size !== state.flowers.length) {
-      this.flowers.clear();
-      state.flowers.forEach((simFlower, i) => {
-        const pos = WORLD.MEADOW_FLOWERS[i % WORLD.MEADOW_FLOWERS.length];
-        this.flowers.set(simFlower.id, new FlowerEntity(simFlower.id, pos.x, pos.y, i * 47));
-      });
+    // Sync flower entities to sim. Flowers carry their own (x, y) — both
+    // starter ones and any seeded-and-planted by foragers — so the world
+    // layer just mirrors the sim list. New sim flowers spawn an entity;
+    // removed sim flowers (witherings in a later slice) drop the entity.
+    const liveIds = new Set<string>();
+    for (const sf of state.flowers) {
+      liveIds.add(sf.id);
+      const existing = this.flowers.get(sf.id);
+      if (!existing) {
+        this.flowers.set(sf.id, new FlowerEntity(sf.id, sf.x, sf.y, sf.hue));
+      } else {
+        // Position is sim-authoritative — keep the entity in sync in case
+        // a planted flower's slot ever needs to be re-resolved.
+        existing.x = sf.x;
+        existing.y = sf.y;
+      }
+    }
+    for (const id of Array.from(this.flowers.keys())) {
+      if (!liveIds.has(id)) this.flowers.delete(id);
     }
 
     if (!this.digSite) {

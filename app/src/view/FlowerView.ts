@@ -58,12 +58,44 @@ export class FlowerView {
   private drawFlower(
     sprite: FlowerSprite,
     sim:
-      | { yieldRemaining: number; regrowTimerMs: number; kind?: 'pollen' | 'nectar' }
+      | {
+          yieldRemaining: number;
+          regrowTimerMs: number;
+          growthMs?: number;
+          tier?: 1 | 2 | 3;
+          kind?: 'pollen' | 'nectar';
+        }
       | undefined,
   ): void {
     const g = sprite.graphics;
     g.clear();
     const isNectar = sim?.kind === 'nectar';
+    // Sapling phase — render a tiny sprout that gradually grows into a
+    // bloom. growthFrac goes 0 (just planted) → 1 (about to open).
+    const growthMs = sim?.growthMs ?? 0;
+    if (growthMs > 0) {
+      const growthFrac = 1 - Math.min(1, growthMs / TUNING.SAPLING_GROWTH_MS);
+      // Stem rises from the ground as growth progresses.
+      const stemH = 2 + growthFrac * 6;
+      g.roundRect(sprite.x - 0.8, sprite.y - stemH, 1.6, stemH + 1, 0.6).fill(0x4a7a2a);
+      // Two tiny leaves splay out from the stem at the top.
+      const leafR = 1.2 + growthFrac * 1.6;
+      g.ellipse(sprite.x - 1.3, sprite.y - stemH + 0.5, leafR, leafR * 0.55)
+        .fill(0x6a9c3a);
+      g.ellipse(sprite.x + 1.3, sprite.y - stemH + 0.5, leafR, leafR * 0.55)
+        .fill(0x6a9c3a);
+      // A closed bud at the top — tints toward the flower's eventual petal
+      // color as growth completes, so the player sees the bloom coming.
+      const tier = sim?.tier ?? 1;
+      const petalColor = PETAL_COLORS[sprite.hue % PETAL_COLORS.length];
+      const budColor = lerpColor(0x6a9c3a, petalColor, growthFrac * 0.7);
+      g.circle(sprite.x, sprite.y - stemH - 0.4, 1 + growthFrac * 1.2).fill(budColor);
+      if (tier === 3 && growthFrac > 0.5) {
+        g.circle(sprite.x, sprite.y - stemH - 0.4, 4)
+          .fill({ color: 0xffe890, alpha: 0.18 * growthFrac });
+      }
+      return;
+    }
     // Nectar flowers wear cool blue/cyan petals; pollen flowers cycle the
     // warmer palette by hue index.
     const color = isNectar
@@ -72,6 +104,7 @@ export class FlowerView {
     const coreColor = isNectar ? 0xffffff : 0xffe066;
     const yieldNow = sim?.yieldRemaining ?? TUNING.FLOWER_YIELD;
     const regrowFrac = sim ? 1 - sim.regrowTimerMs / TUNING.FLOWER_REGROW_MS : 1;
+    const tier = sim?.tier ?? 1;
 
     if (yieldNow === 0) {
       g.roundRect(sprite.x - 1, sprite.y - 4, 2, 12, 1).fill(0x556633);
@@ -80,19 +113,27 @@ export class FlowerView {
       return;
     }
 
+    // Tier-scaled radius: T2 a touch bigger, T3 noticeably bigger, so the
+    // player can spot a jackpot bloom at a glance.
+    const tierScale = tier === 3 ? 1.45 : tier === 2 ? 1.15 : 1.0;
     const petalCount = Math.max(1, Math.min(5, yieldNow));
-    const r = isNectar ? 7 : 6;
+    const r = (isNectar ? 7 : 6) * tierScale;
+    const petalR = (isNectar ? 5.5 : 5) * tierScale;
     for (let i = 0; i < petalCount; i++) {
       const a = (i / petalCount) * Math.PI * 2;
       const px = sprite.x + Math.cos(a) * r;
       const py = sprite.y + Math.sin(a) * r;
-      g.circle(px, py, isNectar ? 5.5 : 5).fill(color);
+      g.circle(px, py, petalR).fill(color);
     }
     if (isNectar) {
       // Faint inner glow so nectar flowers feel special.
-      g.circle(sprite.x, sprite.y, 6).fill({ color: 0xb0e0ff, alpha: 0.35 });
+      g.circle(sprite.x, sprite.y, 6 * tierScale).fill({ color: 0xb0e0ff, alpha: 0.35 });
     }
-    g.circle(sprite.x, sprite.y, 4).fill(coreColor);
+    if (tier === 3) {
+      // Gold halo on T3 — matches the jackpot drop / sapling glow.
+      g.circle(sprite.x, sprite.y, 12).fill({ color: 0xffe890, alpha: 0.18 });
+    }
+    g.circle(sprite.x, sprite.y, 4 * tierScale).fill(coreColor);
   }
 
   private drawSkyFlower(): void {
@@ -116,4 +157,17 @@ export class FlowerView {
   }
 
   // Removed: initFromWorld no longer needed; reconciliation happens in update()
+}
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff;
+  const ag = (a >> 8) & 0xff;
+  const ab = a & 0xff;
+  const br = (b >> 16) & 0xff;
+  const bg = (b >> 8) & 0xff;
+  const bb = b & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const gc = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (gc << 8) | bl;
 }

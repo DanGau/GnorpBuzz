@@ -10,11 +10,16 @@ import {
   countRole,
   nextWorkerCost,
   digSiteHpPct,
+  addPollen,
+  takePollen,
+  spawnRockDrop,
 } from '../sim/state';
+import { WORLD } from '../world/layout';
 import { flowerSystem } from '../sim/systems/flowers';
 import { digSiteSystem } from '../sim/systems/dig-sites';
 import { artifactSystem } from '../sim/systems/artifact';
 import { ascentSystem } from '../sim/systems/ascent';
+import { rockDropsSystem } from '../sim/systems/rock-drops';
 import {
   buyCell,
   assignCell,
@@ -213,6 +218,7 @@ export class Game {
     flowerSystem(this.state, dtMs);
     this.world.reconcile(this.state);
     this.world.update(dtMs, this.state);
+    rockDropsSystem(this.state, dtMs);
     digSiteSystem(this.state);
     artifactSystem(this.state);
     ascentSystem(this.state, dtMs);
@@ -372,13 +378,23 @@ export class Game {
       // tests that want to stress-test the Worker pickup loop without
       // waiting for foragers to fly out and back.
       grantPollen: (amount: number) => {
-        this.state.hive.pollen = Math.min(
-          this.state.hive.pollenCap,
-          this.state.hive.pollen + amount,
-        );
+        // Route through addPollen / takePollen so the physical dot
+        // entities stay in sync with the scalar count. Negative grants
+        // drain from the top of the pile.
+        if (amount >= 0) addPollen(this.state, amount);
+        else takePollen(this.state, Math.min(this.state.hive.pollen, -amount));
         saveToStorage(this.state);
         this.notify();
         return { ok: true };
+      },
+      grantFertilizer: (amount: number) => {
+        this.state.hive.fertilizer = Math.max(0, Math.min(
+          this.state.hive.fertilizerCap,
+          this.state.hive.fertilizer + amount,
+        ));
+        saveToStorage(this.state);
+        this.notify();
+        return { ok: true, total: this.state.hive.fertilizer };
       },
       grantHoney: (amount: number) => {
         this.state.hive.honey = Math.min(
@@ -415,6 +431,25 @@ export class Game {
           }
         }
         return out;
+      },
+      flowers: () => this.state.flowers.map(f => ({ id: f.id, tier: f.tier, growthMs: Math.round(f.growthMs), yield: f.yieldRemaining, x: Math.round(f.x), y: Math.round(f.y) })),
+      rockDrops: () => this.state.rockDrops,
+      rockDropBudget: () => this.state.digSite.dropBudget,
+      fertilizer: () => this.state.hive.fertilizer,
+      // Debug: spawn N rock drops straight from the strike point. Bypasses
+      // the cantor entirely so visual/UI tests of the pile don't need to
+      // wait the ~2.4s cast cadence. The drops still roll their kind/tier
+      // through the normal helper.
+      forceRockDrops: (n: number) => {
+        const site = this.world.digSite;
+        if (!site) return { ok: false, reason: 'no dig site' };
+        const sp = site.strikePoint();
+        const settleBaseY = site.y + WORLD.DIG_SITE_RADIUS - 8;
+        for (let i = 0; i < n; i++) {
+          spawnRockDrop(this.state, sp.x, sp.y, settleBaseY);
+        }
+        this.notify();
+        return { ok: true, count: this.state.rockDrops.length };
       },
       flowerClaims: () =>
         this.state.flowers.map((f) => ({

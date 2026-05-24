@@ -76,16 +76,17 @@ describe('cell actions', () => {
     expect(mustPlaceForager(s)).toBe(false);
   });
 
-  it('first worker of each role is free, then escalates', () => {
+  it('first forager and first wax-worker are free; other roles cost wax up front', () => {
     const s = createInitialState();
     expect(nextWorkerCost(s, 'forager')).toBe(0);
+    expect(nextWorkerCost(s, 'wax-worker')).toBe(0);
+    // Cantor and honey-worker must be paid for from the start so the
+    // player can't soft-lock by filling early cells with non-wax roles.
+    expect(nextWorkerCost(s, 'cantor')).toBeGreaterThan(0);
+    expect(nextWorkerCost(s, 'honey-worker')).toBeGreaterThan(0);
     expect(assignCell(s, 0, 0, 'forager').ok).toBe(true);
     expect(countRole(s, 'forager')).toBe(1);
     expect(nextWorkerCost(s, 'forager')).toBeGreaterThan(0);
-    // Cantor is still free — cost is per-role, and the first-forager
-    // requirement is now satisfied.
-    expect(nextWorkerCost(s, 'cantor')).toBe(0);
-    expect(assignCell(s, -1, 1, 'cantor').ok).toBe(true);
   });
 
   it('placing a second worker of a role requires wax', () => {
@@ -160,6 +161,7 @@ describe('cell actions', () => {
 
   it('honey-worker and wax-worker are placeable after a forager exists', () => {
     const s = createInitialState();
+    s.hive.wax = 100;
     assignCell(s, 0, 0, 'forager'); // free
     expect(assignCell(s, -1, 1, 'honey-worker').ok).toBe(true);
     expect(cellAt(s.hive, -1, 1)?.role).toBe('honey-worker');

@@ -1,14 +1,19 @@
 import { Container, Graphics, Text, type TextStyleOptions } from 'pixi.js';
-import type { GameState, UpgradeId, UpgradeRole } from '../sim/state';
+import type { GameState, UpgradeId, UpgradeRole, Currency } from '../sim/state';
 import {
   describeUpgradeEffect,
   upgradesForRole,
-  totalWax,
+  currencyBalance,
   UPGRADE_DEFS,
   getUpgradeTier,
   isUpgradeUnlocked,
   nextUpgradeCost,
 } from '../sim/state';
+
+const CURRENCY_GLYPH: Record<Currency, string> = {
+  wax: '🕯',
+  fertilizer: '🌿',
+};
 
 // Contextual upgrade panel anchored to a world object. Clicking a resource
 // building opens this panel showing that role's upgrades:
@@ -41,12 +46,14 @@ const ROLE_LABEL: Record<UpgradeRole, string> = {
   forager: 'Forager',
   cantor: 'Cantor',
   'wax-worker': 'Wax Worker',
+  fertilizer: 'Fertilizer',
 };
 
 const ROLE_GLYPH: Record<UpgradeRole, string> = {
   forager: '🌼',
   cantor: '✦',
   'wax-worker': '🕯',
+  fertilizer: '🌿',
 };
 
 interface RowSprites {
@@ -248,9 +255,9 @@ export class UpgradePanelView {
   private refreshPanel(state: GameState): void {
     const panel = this.currentPanel;
     if (!panel) return;
-    const have = totalWax(state);
     for (const row of panel.rows) {
       const def = UPGRADE_DEFS[row.upgradeId];
+      const have = currencyBalance(state, def.currency);
       const tier = getUpgradeTier(state, row.upgradeId);
       const maxed = tier >= def.maxTier;
       const unlocked = isUpgradeUnlocked(state, row.upgradeId);
@@ -263,7 +270,7 @@ export class UpgradePanelView {
       row.onSelect = () => this.callbacks.onBuyUpgrade(row.upgradeId);
       row.name.text = def.name;
       this.drawRowPips(row.pips, tier, def.maxTier, PANEL_W - PANEL_PAD * 2);
-      const btnText = maxed ? 'MAX' : `${cost}🕯`;
+      const btnText = maxed ? 'MAX' : `${cost}${CURRENCY_GLYPH[def.currency]}`;
       row.buttonText.text = btnText;
       drawRowButton(row.button, enabled);
       const dimColor = enabled ? 0xfff2cf : 0x8a7a4a;
@@ -427,7 +434,7 @@ export class UpgradePanelView {
     const def = UPGRADE_DEFS[upgradeId];
     const tier = getUpgradeTier(state, upgradeId);
     const maxed = tier >= def.maxTier;
-    const have = totalWax(state);
+    const have = currencyBalance(state, def.currency);
     const upcost = maxed ? 0 : nextUpgradeCost(state, upgradeId);
     const summary = describeUpgradeEffect(state, upgradeId);
 
@@ -444,11 +451,12 @@ export class UpgradePanelView {
       this.tooltip.next.text = `Next: ${summary.nextLabel ?? ''}`;
       this.tooltip.next.style.fill = have >= upcost ? 0xa0e0a0 : 0xe0a070;
     }
+    const glyph = CURRENCY_GLYPH[def.currency];
     this.tooltip.cost.text = maxed
       ? ''
       : have >= upcost
-        ? `Cost: ${upcost}🕯  ✓ affordable`
-        : `Cost: ${upcost}🕯  (need ${upcost - have} more)`;
+        ? `Cost: ${upcost}${glyph}  ✓ affordable`
+        : `Cost: ${upcost}${glyph}  (need ${upcost - have} more)`;
     if (!maxed) {
       this.tooltip.cost.style.fill = have >= upcost ? 0xa0e0a0 : 0xe0a070;
     }

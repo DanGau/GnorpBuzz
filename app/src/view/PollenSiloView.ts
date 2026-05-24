@@ -12,7 +12,6 @@ import { WORLD } from '../world/layout';
 const SILO_W = 28;
 const SILO_H = 34;
 const RIM_H = 5;
-const FILL_INSET = 2.5;
 const TEXT_SUPERSAMPLE = 6;
 
 export class PollenSiloView {
@@ -27,6 +26,11 @@ export class PollenSiloView {
   private bobPhase: number;
   private lastSeen = -1;
   private flash = 0;
+  // Per-dot interpolation state, keyed by dot id. Tracks the falling
+  // animation: a new dot starts at the silo lip (y = lipY) and eases
+  // down to its target slot. Existing dots whose target changed because
+  // ones below them were removed also re-ease toward the new slot.
+  private dotAnim = new Map<string, { y: number; targetY: number }>();
 
   constructor(onClick?: () => void) {
     this.container = new Container();
@@ -90,7 +94,7 @@ export class PollenSiloView {
     this.container.y = WORLD.POLLEN_SILO.y + bob;
     this.container.scale.set(1 + this.flash * 0.08);
 
-    this.drawFill();
+    this.drawFill(state, dtMs);
     this.drawGlow();
     this.label.text = `${pollen}/${cap}`;
   }
@@ -127,45 +131,50 @@ export class PollenSiloView {
     }
   }
 
-  private drawFill(): void {
+  // Render each pollen entity at its silo-local slot, with a per-dot
+  // falling animation: newly added dots enter at the basket lip and ease
+  // down to their target. Brightens briefly when the count increases.
+  private drawFill(state: GameState, dtMs: number): void {
     const g = this.fill;
     g.clear();
-    // Pollen pile inside the basket — fills from the bottom up. The
-    // basket's silhouette tapers; approximate the fill with a polygon
-    // that matches the inner walls at this height.
-    const innerH = SILO_H - RIM_H - FILL_INSET * 2;
-    const fillH = innerH * this.displayFill;
-    if (fillH <= 0.5) return;
-    const yBottom = SILO_H / 2 - FILL_INSET;
-    const yTop = yBottom - fillH;
-    // Approximate inner half-widths at top/bottom of fill (linear taper
-    // between basket walls).
-    const bottomHalf = SILO_W / 2 - 4;
-    const topHalfFull = SILO_W / 2 - 2;
-    const tBottom = (yBottom - (-SILO_H / 2 + RIM_H + FILL_INSET)) / innerH;
-    const tTop = (yTop - (-SILO_H / 2 + RIM_H + FILL_INSET)) / innerH;
-    const halfAt = (t: number): number =>
-      bottomHalf + (topHalfFull - bottomHalf) * Math.max(0, Math.min(1, t));
-    const bh = halfAt(tBottom);
-    const th = halfAt(tTop);
+    const dots = state.hive.pollenDots ?? [];
 
-    // Glow color shifts brighter on flash (just-deposited beat).
+    const lipY = -SILO_H / 2 + RIM_H + 1;
+
+    // Garbage-collect anim entries whose dot no longer exists.
+    const liveIds = new Set<string>();
+    for (const d of dots) liveIds.add(d.id);
+    for (const id of this.dotAnim.keys()) {
+      if (!liveIds.has(id)) this.dotAnim.delete(id);
+    }
+
+    // Ease factor — fast enough to feel like a settling grain, slow
+    // enough that newly added dots read as "falling in" not "snapping".
+    const ease = 1 - Math.pow(0.0008, dtMs / 1000);
+
     const baseGold = 0xf5d166;
     const bright = 0xfff0a0;
-    const color = lerpColor(baseGold, bright, this.flash);
+    const dotColor = lerpColor(baseGold, bright, this.flash);
 
-    g.poly([-bh, yBottom, bh, yBottom, th, yTop, -th, yTop]).fill(color);
-    // Highlight band on top so the surface reads as a pile, not a flat
-    // color block.
-    g.rect(-th, yTop, th * 2, 1).fill({ color: 0xffffff, alpha: 0.5 });
-    // Sprinkled brighter dots scattered across the visible surface, for
-    // the "tiny pollen grains" texture.
-    const sprinkles = Math.min(12, Math.floor(fillH / 2));
-    for (let i = 0; i < sprinkles; i++) {
-      const t = ((i * 1597) % 100) / 100;
-      const sx = (-th + th * 2 * t) * 0.9;
-      const sy = yTop + ((i * 53) % 7);
-      g.circle(sx, sy, 0.7).fill({ color: 0xfff2bf, alpha: 0.85 });
+    for (const d of dots) {
+      let anim = this.dotAnim.get(d.id);
+      if (!anim) {
+        // Spawn animation: start at the lip with a small horizontal
+        // jitter so multiple dots arriving on the same tick don't
+        // overlay perfectly.
+        anim = { y: lipY, targetY: d.y };
+        this.dotAnim.set(d.id, anim);
+      } else {
+        anim.targetY = d.y;
+      }
+      anim.y += (anim.targetY - anim.y) * ease;
+
+      g.circle(d.x, anim.y, 1.6).fill(dotColor);
+      // Tiny highlight pip — gives each grain a hint of dimensionality.
+      g.circle(d.x - 0.5, anim.y - 0.5, 0.55).fill({
+        color: 0xfff2cf,
+        alpha: 0.85,
+      });
     }
 
     // Rim shadow on top to anchor the pile inside the basket.

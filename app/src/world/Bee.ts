@@ -1,4 +1,4 @@
-import type { GameState } from '../sim/state';
+import type { GameState, RockDrop } from '../sim/state';
 import {
   TUNING,
   getUpgradeTier,
@@ -8,14 +8,20 @@ import {
   cellSynergy,
   addPollen,
   takePollen,
-  pollenAvailable,
   pollenSiloHasRoom,
   addHoney,
   addWax,
+  addFertilizer,
   waxCap,
+  fertilizerCap,
   waxPerDelivery,
   spendHoney,
   manaCostFor,
+  digSiteAcceptingDamage,
+  applyDropBudget,
+  nearestEmptyMeadowTile,
+  plantFlowerAt,
+  removeRockDrop,
 } from '../sim/state';
 import type { World } from './World';
 import { WORLD } from './layout';
@@ -36,13 +42,15 @@ import { WORLD } from './layout';
 // The buildings (Pollen Silo, Wax Block, Honey Jar) are NOT here — they
 // live at `WORLD.POLLEN_SILO`, `WORLD.WAX_BLOCK`, `WORLD.HONEY_JAR` and
 // the bees route to those coordinates explicitly when working. The park
-// anchors are just where bees idle BETWEEN trips, gathered loosely
-// around the relevant building so the swarm reads as "tending it."
+// anchors put each role HOVERING ABOVE its building like a small swarm
+// cloud — not on top of it — so the building silhouette and its fill /
+// count UI stay readable and the bees read as "tending the thing below
+// them" rather than smothering it.
 export const PARK_ANCHORS = {
-  forager: { x: WORLD.POLLEN_SILO.x + 8, y: WORLD.POLLEN_SILO.y + 18 },
-  'honey-worker': { x: WORLD.HONEY_JAR.x - 26, y: WORLD.HONEY_JAR.y + 28 },
-  'wax-worker': { x: WORLD.WAX_BLOCK.x, y: WORLD.WAX_BLOCK.y + 14 },
-  cantor: { x: WORLD.HIVE.x, y: WORLD.HIVE.y - 80 }, // honey jar above hive
+  forager: { x: WORLD.POLLEN_SILO.x + 4, y: WORLD.POLLEN_SILO.y - 36 },
+  'honey-worker': { x: WORLD.HONEY_JAR.x - 18, y: WORLD.HONEY_JAR.y - 38 },
+  'wax-worker': { x: WORLD.WAX_BLOCK.x, y: WORLD.WAX_BLOCK.y - 76 },
+  cantor: { x: WORLD.HIVE.x, y: WORLD.HIVE.y - 80 },
 } as const;
 
 type ParkRole = keyof typeof PARK_ANCHORS;
@@ -116,10 +124,16 @@ export type BeeState =
   // shared: a spellcaster sitting on empty mana drifts in a loose swarm
   // near its home cell until honey is available again.
   | 'idle-swarm'
-  // forager
+  // forager — pollen path
   | 'flying-to-flower'
   | 'harvesting'
   | 'flying-home-with-pollen'
+  // forager — rock-drop haul paths. Foragers split their attention between
+  // the meadow (pollen) and the rock pile (seeds + fertilizer). Each idle
+  // tick they pick the NEAREST viable task.
+  | 'flying-to-drop'           // fetching a claimed drop from the rock pile
+  | 'flying-to-plant'          // carrying a seed to the nearest empty meadow tile
+  | 'flying-to-fertilizer-bin' // carrying fertilizer to the Fertilizer Bin
   // worker (honey-worker or wax-worker): home → forager pile → home cycle
   // where deposit converts one pollen dot into honey or wax respectively.
   | 'worker-flying-out'
@@ -131,7 +145,7 @@ export type BeeState =
   | 'cantor-hovering'
   | 'cantor-casting';
 
-export type BeeCarrying = 'none' | 'pollen';
+export type BeeCarrying = 'none' | 'pollen' | 'seed' | 'fertilizer';
 
 const ARRIVE_THRESHOLD = 4;
 const IDLE_WANDER_RADIUS = 30;
@@ -180,6 +194,15 @@ export class Bee {
   castCount: number;
   hoverX: number;
   hoverY: number;
+  // Forager rock-drop bookkeeping. When the bee claims a settled drop in
+  // the rock pile, the drop's id and quality go here so we can release it
+  // cleanly on cancel and know what to do on pickup. Tier is meaningful
+  // only while carrying === 'seed'; plantTarget is the meadow tile we
+  // committed to while flying-to-plant.
+  claimedDropId: string | null;
+  carrySeedTier: 1 | 2 | 3;
+  plantTargetX: number;
+  plantTargetY: number;
   // Sky parking spot above the hive — per-bee fixed, used as the wander
   // center for any idle state and the destination for return-to-base
   // flights. Replaces the old "wander around the home cell" behavior so
@@ -236,6 +259,10 @@ export class Bee {
     this.nextTipScheduledAtMs = 4000 + Math.random() * 3000;
     this.castTimerMs = 0;
     this.castCount = 0;
+    this.claimedDropId = null;
+    this.carrySeedTier = 1;
+    this.plantTargetX = 0;
+    this.plantTargetY = 0;
     // Cantor's cast position — sits inside the park zone, slightly above
     // the other bees parked there so multiple cantors stack cleanly along
     // the top of the cloud rather than weaving through the drifters below.
@@ -349,30 +376,25 @@ export class Bee {
       case 'idle': {
         this.idleWaitMs -= dtMs;
         if (this.idleWaitMs <= 0) {
-          // Pollen Silo full → don't fly out. Bob at the park spot so the
-          // player can see "we have nowhere to put more pollen."
-          if (!pollenSiloHasRoom(state)) {
-            this.idleWaitMs = TUNING.WORKER_IDLE_RETRY_MS;
-            this.pickIdleTarget(world);
-            this.flyToward(dtMs, state);
-            break;
-          }
-          const claimed = this.tryClaimFlower(state, world);
-          if (claimed) {
-            this.state = 'flying-to-flower';
-            this.windupRemainingMs = 100;
+          // Pick the NEAREST viable task: a flower in the meadow OR a
+          // settled drop on the rock pile. The silo being full only
+          // gates the flower path — foragers can still haul seeds /
+          // fertilizer because those go to different containers.
+          const picked = this.pickForagerTask(state, world);
+          if (picked) {
             this.consecutiveIdleResets = 0;
           } else {
-            // Poll fast — when a peer finishes harvesting and frees up a
-            // flower slot we want the waiting bee to grab it immediately.
+            // Nothing actionable — bob in place. Poll fast so a freed-up
+            // slot or a new drop is grabbed immediately.
             this.idleWaitMs = 280;
             this.pickIdleTarget(world);
-            // "?" only when there's genuinely no open flower slot anywhere
-            // (everything wilted/regrowing or fully crewed).
-            const anyOpenSlot = state.flowers.some(
+            const anyOpenFlower = state.flowers.some(
               (f) => f.yieldRemaining - f.claimants > 0,
             );
-            if (!anyOpenSlot) {
+            const anyDrop = state.rockDrops.some(
+              (d) => d.settled && !d.claimedBy,
+            );
+            if (!anyOpenFlower && !anyDrop) {
               this.bumpIdleConfusion(world);
             } else {
               this.consecutiveIdleResets = 0;
@@ -457,37 +479,170 @@ export class Bee {
         }
         break;
       }
+      case 'flying-to-drop': {
+        if (this.flyToward(dtMs, state)) {
+          // Arrived. Pick up the drop (remove from pile) and decide where
+          // to go next based on kind. If the drop vanished mid-flight
+          // (defensive — the claim should prevent this), abort to idle.
+          const drop = state.rockDrops.find((d) => d.id === this.claimedDropId);
+          if (!drop) {
+            this.claimedDropId = null;
+            this.returnToIdle(world);
+            break;
+          }
+          this.pulseShake(state, 80);
+          world.particles.emit('sparkle', this.x, this.y, 2);
+          if (drop.kind === 'seed') {
+            this.carrying = 'seed';
+            this.carrySeedTier = drop.tier;
+            // Pick a planting tile now so the flight is committed. If the
+            // meadow filled up since this bee left the park spot, the
+            // seed is lost — drop the pickup and go idle. (User accepted
+            // that bad management can waste resources.)
+            const tile = nearestEmptyMeadowTile(state, this.x, this.y);
+            removeRockDrop(state, drop.id);
+            this.claimedDropId = null;
+            if (!tile) {
+              this.carrying = 'none';
+              this.returnToIdle(world);
+              break;
+            }
+            this.plantTargetX = tile.x;
+            this.plantTargetY = tile.y;
+            this.setFlightTarget(tile.x, tile.y - 4);
+            this.state = 'flying-to-plant';
+          } else {
+            // Fertilizer — deliver to the bin.
+            this.carrying = 'fertilizer';
+            removeRockDrop(state, drop.id);
+            this.claimedDropId = null;
+            this.setFlightTarget(
+              WORLD.FERTILIZER_BIN.x + this.seed * 4,
+              WORLD.FERTILIZER_BIN.y - 6,
+            );
+            this.state = 'flying-to-fertilizer-bin';
+          }
+        }
+        break;
+      }
+      case 'flying-to-plant': {
+        if (this.flyToward(dtMs, state)) {
+          // Plant! The new flower appears at the target tile. Slice 4
+          // will replace the instant-bloom with a sapling growth phase.
+          plantFlowerAt(state, this.plantTargetX, this.plantTargetY, this.carrySeedTier);
+          world.particles.emit('sparkle', this.plantTargetX, this.plantTargetY - 4, 3);
+          this.pulseShake(state, 90);
+          this.carrying = 'none';
+          this.state = 'idle';
+          this.idleWaitMs = 0;
+          this.setFlightTarget(this.parkX, this.parkY);
+        }
+        break;
+      }
+      case 'flying-to-fertilizer-bin': {
+        if (this.flyToward(dtMs, state)) {
+          const added = addFertilizer(state, 1);
+          if (added > 0) {
+            world.particles.emit(
+              'sparkle',
+              WORLD.FERTILIZER_BIN.x,
+              WORLD.FERTILIZER_BIN.y - 8,
+              3,
+            );
+          }
+          this.pulseShake(state, 90);
+          this.carrying = 'none';
+          this.state = 'idle';
+          this.idleWaitMs = 0;
+          this.setFlightTarget(this.parkX, this.parkY);
+        }
+        break;
+      }
       default: {
         this.returnToIdle(world);
       }
     }
   }
 
-  private tryClaimFlower(state: GameState, world: World): boolean {
-    let bestId: string | null = null;
+  // Pick the nearest actionable task for an idle forager — a flower
+  // (pollen) or a settled rock-drop (seed/fertilizer). Sets up the claim
+  // and transitions to the appropriate flying state. Returns true if a
+  // task was claimed.
+  private pickForagerTask(state: GameState, world: World): boolean {
+    let bestKind: 'flower' | 'drop' | null = null;
     let bestDist = Infinity;
-    let bestPos: { x: number; y: number } | null = null;
-    for (const f of state.flowers) {
-      // A flower hosts as many bees as it has remaining yield — its bloom
-      // is the cap, not a single exclusive claim.
-      if (f.yieldRemaining - f.claimants <= 0) continue;
-      const pos = world.getFlowerPosition(f.id);
-      if (!pos) continue;
-      const d = Math.hypot(pos.x - this.x, pos.y - this.y);
-      if (d < bestDist) {
-        bestDist = d;
-        bestId = f.id;
-        bestPos = pos;
+    let bestFlowerId: string | null = null;
+    let bestFlowerPos: { x: number; y: number } | null = null;
+    let bestDrop: RockDrop | null = null;
+
+    // Flower candidates — only if silo has room AND the flower has an
+    // open slot (yield > claimants).
+    if (pollenSiloHasRoom(state)) {
+      for (const f of state.flowers) {
+        // Saplings (still growing) can't be harvested yet — skip until
+        // they open up.
+        if (f.growthMs > 0) continue;
+        if (f.yieldRemaining - f.claimants <= 0) continue;
+        const pos = world.getFlowerPosition(f.id);
+        if (!pos) continue;
+        const d = Math.hypot(pos.x - this.x, pos.y - this.y);
+        if (d < bestDist) {
+          bestDist = d;
+          bestKind = 'flower';
+          bestFlowerId = f.id;
+          bestFlowerPos = pos;
+        }
       }
     }
-    if (!bestId || !bestPos) return false;
-    const f = state.flowers.find((x) => x.id === bestId)!;
-    f.claimants += 1;
-    this.targetFlowerId = bestId;
-    // Jitter the approach point so co-harvesting bees don't fully overlap.
-    this.targetX = bestPos.x + this.seed * 7;
-    this.targetY = bestPos.y - 6;
-    return true;
+
+    // Drop candidates — only those that lead to a useful action right
+    // now. Seeds require an empty meadow tile; fertilizer requires bin
+    // room. Cheaper "any open tile" check is computed lazily on first
+    // seed encounter so a fully-pollen-only situation doesn't pay for it.
+    let meadowTileChecked = false;
+    let meadowTileAvailable = false;
+    const binFull = state.hive.fertilizer >= fertilizerCap(state);
+    for (const drop of state.rockDrops) {
+      if (!drop.settled || drop.claimedBy) continue;
+      if (drop.kind === 'seed') {
+        if (!meadowTileChecked) {
+          meadowTileChecked = true;
+          meadowTileAvailable = nearestEmptyMeadowTile(state, 0, 0) !== null;
+        }
+        if (!meadowTileAvailable) continue;
+      } else if (drop.kind === 'fertilizer') {
+        if (binFull) continue;
+      }
+      const d = Math.hypot(drop.x - this.x, drop.y - this.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestKind = 'drop';
+        bestDrop = drop;
+      }
+    }
+
+    if (bestKind === 'flower' && bestFlowerId && bestFlowerPos) {
+      const f = state.flowers.find((x) => x.id === bestFlowerId);
+      if (!f) return false;
+      f.claimants += 1;
+      this.targetFlowerId = bestFlowerId;
+      // Jitter the approach point so co-harvesting bees don't fully overlap.
+      this.targetX = bestFlowerPos.x + this.seed * 7;
+      this.targetY = bestFlowerPos.y - 6;
+      this.windupRemainingMs = 100;
+      this.state = 'flying-to-flower';
+      return true;
+    }
+    if (bestKind === 'drop' && bestDrop) {
+      bestDrop.claimedBy = this.id;
+      this.claimedDropId = bestDrop.id;
+      // Approach slightly above the drop so the bee doesn't bury its body
+      // in the pile silhouette.
+      this.setFlightTarget(bestDrop.x + this.seed * 4, bestDrop.y - 6);
+      this.state = 'flying-to-drop';
+      return true;
+    }
+    return false;
   }
 
   private releaseFlowerClaim(state: GameState): void {
@@ -532,8 +687,12 @@ export class Bee {
           this.flyToward(dtMs, state);
           break;
         }
-        // No pollen available → bob and re-check.
-        if (!pollenAvailable(state)) {
+        // Pollen-stock gate. Honey workers run on a single pollen per cycle;
+        // wax workers haul a full recipe back at once, so they wait for the
+        // silo to actually contain enough to start a batch.
+        const pollenNeeded =
+          this.role === 'wax-worker' ? TUNING.WAX_RECIPE_POLLEN : 1;
+        if (state.hive.pollen < pollenNeeded) {
           this.idleWaitMs = TUNING.WORKER_IDLE_RETRY_MS;
           this.pickIdleTarget(world);
           this.flyToward(dtMs, state);
@@ -551,12 +710,15 @@ export class Bee {
       }
       case 'worker-flying-out': {
         if (this.flyToward(dtMs, state)) {
-          // Try to pluck one pollen from the silo. May have been emptied
-          // mid-flight by another worker — if so, fly back empty and try
-          // again next idle. Visible "missed it" beat without locking up.
-          if (takePollen(state, 1)) {
+          // Try to grab the full recipe from the silo. May have been
+          // emptied mid-flight by another worker — if so, fly back empty
+          // and try again next idle. Visible "missed it" beat without
+          // locking up.
+          const want =
+            this.role === 'wax-worker' ? TUNING.WAX_RECIPE_POLLEN : 1;
+          if (takePollen(state, want)) {
             this.carrying = 'pollen';
-            this.carryAmount = 1;
+            this.carryAmount = want;
             world.particles.emit('pollenPuff', this.x, this.y, 3);
             this.pulseShake(state, 80);
           }
@@ -571,12 +733,38 @@ export class Bee {
       case 'worker-flying-home': {
         if (this.flyToward(dtMs, state)) {
           this.state = 'worker-depositing';
-          this.workTimer = TUNING.WORKER_DEPOSIT_MS;
+          // Wax-workers knead the batch for a beat so the "crafting"
+          // silhouette is the dominant read; honey-workers keep their
+          // snappy deposit so the honey loop stays brisk.
+          this.workTimer =
+            this.role === 'wax-worker'
+              ? TUNING.WAX_KNEAD_MS
+              : TUNING.WORKER_DEPOSIT_MS;
         }
         break;
       }
       case 'worker-depositing': {
+        const beforeT = this.workTimer;
         this.workTimer -= dtMs;
+        // Periodic kneading puffs while a wax-worker is converting pollen
+        // into wax. One particle every ~300ms of work timer reads as
+        // "something is happening in there" without spamming.
+        if (
+          this.role === 'wax-worker' &&
+          this.carrying === 'pollen' &&
+          Math.floor(beforeT / 300) !== Math.floor(this.workTimer / 300)
+        ) {
+          // Smoke puff from the workshop chimney — anchored to the
+          // chimney top on the right slope of the roof (see WaxBlockView
+          // for the building geometry).
+          const jitterX = (this.seed - 0.5) * 2;
+          world.particles.emit(
+            'sparkle',
+            WORLD.WAX_BLOCK.x + 10 + jitterX,
+            WORLD.WAX_BLOCK.y - 48,
+            1,
+          );
+        }
         if (this.workTimer <= 0) {
           if (this.carrying === 'pollen') {
             if (this.role === 'honey-worker') {
@@ -627,7 +815,12 @@ export class Bee {
   // the shared idle-swarm state until honey is available again.
 
   private updateCantor(dtMs: number, state: GameState, world: World): void {
-    const siteActive = state.digSite.state === 'active';
+    // Cantors don't cast when the rock can't take damage — either the
+    // site isn't active, or the rock-drop pile is at cap (rock invincible
+    // until foragers haul drops away). Without this gate the cantor would
+    // spend mana on no-op casts; with it, the player feels the jam:
+    // cantors hover idle until the pile drains.
+    const siteActive = digSiteAcceptingDamage(state);
 
     switch (this.state) {
       case 'idle-swarm': {
@@ -692,8 +885,19 @@ export class Bee {
             (1 + TUNING.SYNERGY_CANTOR_DAMAGE * synergy);
           state.digSite.hp = Math.max(0, state.digSite.hp - dmg);
 
-          // Visual spark heading toward the rock.
+          // Convert this hit's damage into rock-drop spawns. Drops emerge
+          // from the strike point and arc into the pile near the boulder
+          // base, where foragers will haul them away. The pile-base Y is
+          // a band below the boulder anchor; see layout.ts.
+          state.digSite.dropBudget += dmg * TUNING.DROP_RATE_PER_DAMAGE;
           const site = world.digSite;
+          const strike = site ? site.strikePoint() : { x: this.x, y: this.y };
+          // Settle band sits just below the boulder visual — drops mound
+          // up at the base on the meadow ground.
+          const settleBaseY = (site ? site.y : 0) + WORLD.DIG_SITE_RADIUS - 8;
+          applyDropBudget(state, strike.x, strike.y, settleBaseY);
+
+          // Visual spark heading toward the rock.
           if (site) {
             const sp = site.strikePoint();
             world.emitSpark(this.x, this.y, sp.x, sp.y);
