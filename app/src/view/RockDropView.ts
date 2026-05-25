@@ -1,10 +1,11 @@
 import { Container, Graphics } from 'pixi.js';
 import type { GameState, RockDrop } from '../sim/state';
 
-// Render the loot pile near the boulder. Iterates `state.rockDrops` every
-// frame and draws each at its current position. Settled drops are static;
-// in-flight drops show their arc as physics runs in the sim layer. Visual
-// style by kind:
+// Render the loot pile near the boulder. Each drop owns its own Graphics
+// object built once at the origin so we can apply `.rotation` and `.position`
+// per frame — Pixi's batched Graphics primitives don't support a per-shape
+// rotation, so a single shared canvas can't tumble individual drops.
+// Visual style by kind:
 //   seed       — small dark teardrop in a tier-tinted hull
 //   fertilizer — chunky green-brown nub
 // Fossil honey never reaches here — it auto-applies on spawn.
@@ -23,45 +24,65 @@ const SEED_TIER_GLINT: Record<1 | 2 | 3, number> = {
 
 export class RockDropView {
   readonly container: Container;
-  private layer: Graphics;
+  // Halos sit underneath all the spinning drops so they read as a static
+  // ground glow rather than tumbling with the seed.
+  private halos: Graphics;
+  private sprites = new Map<string, Graphics>();
 
   constructor() {
     this.container = new Container();
-    this.layer = new Graphics();
-    this.container.addChild(this.layer);
+    this.halos = new Graphics();
+    this.container.addChild(this.halos);
   }
 
   update(state: GameState): void {
-    const g = this.layer;
-    g.clear();
+    this.halos.clear();
+    const seen = new Set<string>();
     for (const d of state.rockDrops) {
-      this.drawDrop(g, d);
+      seen.add(d.id);
+      let sprite = this.sprites.get(d.id);
+      if (!sprite) {
+        sprite = this.buildSprite(d);
+        this.sprites.set(d.id, sprite);
+        this.container.addChild(sprite);
+      }
+      sprite.position.set(d.x, d.y);
+      sprite.rotation = d.rotation;
+      // Tier halos are screen-space — draw them at the drop's current
+      // position without rotation. Keeps the sparkle "stuck to" the
+      // seed visually even while the hull tumbles.
+      if (d.kind === 'seed' && d.tier === 3) {
+        this.halos.circle(d.x, d.y, 7).fill({ color: 0xffe890, alpha: 0.22 });
+      } else if (d.kind === 'seed' && d.tier === 2) {
+        this.halos.circle(d.x, d.y, 5).fill({ color: 0xb8d860, alpha: 0.14 });
+      }
+    }
+    // Reap sprites for drops that no longer exist (hauled away).
+    for (const [id, sprite] of this.sprites) {
+      if (!seen.has(id)) {
+        sprite.destroy();
+        this.sprites.delete(id);
+      }
     }
   }
 
-  private drawDrop(g: Graphics, d: RockDrop): void {
+  // Build a drop's sprite once at the local origin. Position + rotation
+  // are applied at the container level so per-frame work is just two
+  // transform writes — no Graphics rebuild.
+  private buildSprite(d: RockDrop): Graphics {
+    const g = new Graphics();
     if (d.kind === 'fertilizer') {
-      // A chunky compost nub — irregular pebble with a hint of green moss
-      // on top so it reads as organic, not just another seed.
-      g.ellipse(d.x, d.y, 4.5, 3.4).fill(0x4a3210);
-      g.ellipse(d.x - 0.8, d.y - 0.6, 3.0, 1.8).fill({ color: 0x5a4218, alpha: 0.9 });
-      g.circle(d.x + 1.0, d.y - 1.8, 1.2).fill({ color: 0x6e8c2a, alpha: 0.95 });
-      g.circle(d.x - 0.6, d.y - 2.0, 0.8).fill({ color: 0x8aa83a, alpha: 0.85 });
-      return;
+      g.ellipse(0, 0, 4.5, 3.4).fill(0x4a3210);
+      g.ellipse(-0.8, -0.6, 3.0, 1.8).fill({ color: 0x5a4218, alpha: 0.9 });
+      g.circle(1.0, -1.8, 1.2).fill({ color: 0x6e8c2a, alpha: 0.95 });
+      g.circle(-0.6, -2.0, 0.8).fill({ color: 0x8aa83a, alpha: 0.85 });
+      return g;
     }
-    // Seed — teardrop with tier-colored hull, dark eye, tiny glint.
     const tint = SEED_TIER_TINT[d.tier];
     const glint = SEED_TIER_GLINT[d.tier];
-    g.ellipse(d.x, d.y, 3.6, 4.5).fill(tint);
-    g.ellipse(d.x - 0.9, d.y - 0.9, 1.5, 2.0).fill({ color: glint, alpha: 0.8 });
-    g.circle(d.x + 0.6, d.y + 0.9, 0.8).fill({ color: 0x1a0e04, alpha: 0.9 });
-    // Tier-3 seeds get a subtle aura so the player notices the jackpot.
-    if (d.tier === 3) {
-      g.circle(d.x, d.y, 7).fill({ color: 0xffe890, alpha: 0.22 });
-    }
-    // Tier-2 seeds get a faint green halo — subtler than T3 but still a tell.
-    if (d.tier === 2) {
-      g.circle(d.x, d.y, 5).fill({ color: 0xb8d860, alpha: 0.14 });
-    }
+    g.ellipse(0, 0, 3.6, 4.5).fill(tint);
+    g.ellipse(-0.9, -0.9, 1.5, 2.0).fill({ color: glint, alpha: 0.8 });
+    g.circle(0.6, 0.9, 0.8).fill({ color: 0x1a0e04, alpha: 0.9 });
+    return g;
   }
 }

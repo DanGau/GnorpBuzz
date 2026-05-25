@@ -13,6 +13,7 @@ import {
   addPollen,
   takePollen,
   spawnRockDrop,
+  tickPendingHits,
 } from '../sim/state';
 import { WORLD } from '../world/layout';
 import { flowerSystem } from '../sim/systems/flowers';
@@ -218,6 +219,7 @@ export class Game {
     flowerSystem(this.state, dtMs);
     this.world.reconcile(this.state);
     this.world.update(dtMs, this.state);
+    tickPendingHits(this.state, dtMs);
     rockDropsSystem(this.state, dtMs);
     digSiteSystem(this.state);
     artifactSystem(this.state);

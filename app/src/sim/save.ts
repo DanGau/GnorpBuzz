@@ -55,8 +55,13 @@ export function deserialize(blob: string): GameState {
   // the field; default to empty. Forager claims are ephemeral (the bees
   // are rebuilt on load) so any persisted claim is stale — clear them.
   if (!Array.isArray(merged.rockDrops)) merged.rockDrops = [];
-  for (const d of merged.rockDrops) d.claimedBy = null;
+  for (const d of merged.rockDrops) {
+    d.claimedBy = null;
+    if (typeof d.rotation !== 'number') d.rotation = 0;
+    if (typeof d.spin !== 'number') d.spin = 0;
+  }
   if (typeof merged.digSite.dropBudget !== 'number') merged.digSite.dropBudget = 0;
+  if (!Array.isArray(merged.digSite.pendingHits)) merged.digSite.pendingHits = [];
 
   // Defensive defaults — fields that may be missing from partial saves.
   if (!merged.flowers) merged.flowers = base.flowers;

@@ -38,13 +38,18 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
 
   // 1) Gravity + air drag + integration for unsettled drops. Air drag
   //    bleeds horizontal momentum even mid-bounce so drops don't skid
-  //    forever across the map between contacts.
+  //    forever across the map between contacts. Rotation integrates
+  //    every frame with its own air-drag analogue so spin doesn't
+  //    persist forever once the drop slows.
+  const spinDrag = Math.pow(0.65, dt); // light bleed mid-air
   for (const d of drops) {
     if (d.settled) continue;
     d.vy += gravity * dt;
     d.vx *= airDrag;
     d.x += d.vx * dt;
     d.y += d.vy * dt;
+    d.rotation += d.spin * dt;
+    d.spin *= spinDrag;
   }
 
   // 2) Floor + side walls. The pile is fenced between LEFT_WALL (the
@@ -53,6 +58,7 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
   //    catches them with friction. Drops with |vy| below the bounce
   //    threshold just rest on the floor — avoids endless microbounces.
   const rightWall = TUNING.ROCK_PILE_RIGHT_WALL - r;
+  const leftWall = TUNING.ROCK_PILE_LEFT_WALL + r;
   for (const d of drops) {
     if (d.settled) continue;
     if (d.y > floorY) {
@@ -63,16 +69,27 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
         d.vy = 0;
       }
       d.vx *= friction;
+      // Rolling contact — lock spin to translation (no-slip rolling) so
+      // the drop's rotation reads as caused by its motion across the
+      // ground, not as a separate inherited tumble. ω = v / r.
+      d.spin = d.vx / r;
     }
     if (d.x > rightWall) {
       d.x = rightWall;
       if (d.vx > 0) d.vx = -d.vx * restitution;
     }
+    if (d.x < leftWall) {
+      d.x = leftWall;
+      if (d.vx < 0) d.vx = -d.vx * restitution;
+    }
   }
 
   // 3) Pairwise circle-vs-circle. Resolve overlap first, then apply a
-  //    normal impulse for any approaching contact. Settled drops act as
-  //    immovable obstacles (mass = infinity).
+  //    normal impulse for any approaching contact. Settled drops are
+  //    "sleeping" obstacles — a hard enough hit (normal closing speed
+  //    above WAKE_VEL) jostles them awake and the contact resolves as
+  //    equal-mass. Soft bumps still treat them as immovable so the pile
+  //    doesn't shimmer every time a forager kicks dust on it.
   for (let i = 0; i < drops.length; i++) {
     const a = drops[i];
     for (let j = i + 1; j < drops.length; j++) {
@@ -89,6 +106,22 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
       const nx = dx / dist;
       const ny = dy / dist;
       const overlap = minDist - dist;
+
+      // Closing speed along the contact normal. Used both for the
+      // velocity response and the wake threshold.
+      const vRelN = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+      const closingSpeed = -vRelN;
+
+      // Wake a sleeping drop if the incoming hit is energetic enough.
+      // Threshold is intentionally above sleep velocity so settled-on-
+      // settled or feather-tap contacts don't ripple through the pile.
+      if (
+        a.settled !== b.settled &&
+        closingSpeed > TUNING.ROCK_DROP_WAKE_VEL
+      ) {
+        if (a.settled) a.settled = false;
+        if (b.settled) b.settled = false;
+      }
 
       // Position correction — split by mobility so settled drops don't move.
       if (a.settled) {
@@ -111,7 +144,6 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
       let vay = a.vy;
       let vbx = b.vx;
       let vby = b.vy;
-      const vRelN = (vbx - vax) * nx + (vby - vay) * ny;
       if (vRelN < 0) {
         // Mass model: settled = infinite mass, unsettled = mass 1.
         if (a.settled && !b.settled) {
@@ -154,7 +186,22 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
     if (isSupported(d, drops, r, floorY)) {
       d.vx = 0;
       d.vy = 0;
+      d.spin = 0;
       d.settled = true;
+    }
+  }
+
+  // 5) Support check for the already-settled. If a forager hauled a
+  //    drop out of the middle of the pile (the only thing that removes
+  //    drops), or a settled drop was woken in step 3, anything that
+  //    was resting on it would otherwise hang in mid-air. Re-test
+  //    support and unsettle unsupported drops — gravity catches them
+  //    next tick and they re-settle in the gap. The drop itself is
+  //    never destroyed here; this only flips the settled flag.
+  for (const d of drops) {
+    if (!d.settled) continue;
+    if (!isSupported(d, drops, r, floorY)) {
+      d.settled = false;
     }
   }
 }

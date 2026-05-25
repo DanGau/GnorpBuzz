@@ -392,6 +392,19 @@ export interface DigSiteData {
   // what wires "more damage → more loot" without spawning fractional
   // entities. Reset on every dig-site transition (artifact reveal).
   dropBudget: number;
+  // Queue of cantor casts whose sparks are still in-flight. Each entry
+  // resolves into a damage tick + drop spawns when its etaMs ticks to 0,
+  // so the rock's cracks deepen and seeds pop out at the same moment the
+  // visual spark hits the boulder — not when the cantor fires.
+  pendingHits: PendingHit[];
+}
+
+export interface PendingHit {
+  damage: number;
+  strikeX: number;
+  strikeY: number;
+  settleBaseY: number;
+  etaMs: number;
 }
 
 // ---- Rock drops ----
@@ -433,6 +446,12 @@ export interface RockDrop {
   // Ephemeral runtime state; not persisted (reset to null on load).
   claimedBy: string | null;
   spawnedAtMs: number;
+  // Sprite rotation in radians plus angular velocity in rad/s. Spawned
+  // with a random tumble; in-air drops keep spinning ballistically;
+  // floor contact couples the spin to horizontal velocity so drops
+  // visibly roll; settled drops freeze at whatever angle they landed.
+  rotation: number;
+  spin: number;
 }
 
 // ---- Ascent (endgame) ----
@@ -540,7 +559,13 @@ export const TUNING = {
   // hopping up another microbounce.
   ROCK_DROP_BOUNCE_FLOOR_VY: 40,
   // Speed threshold below which a supported drop falls asleep.
-  ROCK_DROP_SLEEP_VEL: 18,
+  // Kept low so drops have visible roll-out time before snapping to
+  // settled — the no-slip rolling needs a few rotations to read.
+  ROCK_DROP_SLEEP_VEL: 8,
+  // Closing speed required to knock a settled drop loose on contact.
+  // Sits well above SLEEP_VEL so the pile doesn't shimmer from soft
+  // contacts but a fresh drop falling from the rock will jostle it.
+  ROCK_DROP_WAKE_VEL: 90,
   CANTOR_MANA_COST: 1,
 
   // Cantor cantrip — a hovering caster that fires a slow projectile at the
@@ -810,6 +835,7 @@ export function createInitialState(): GameState {
       maxHp: TUNING.DIG_SITE_TIER_1_HP,
       state: 'active',
       dropBudget: 0,
+      pendingHits: [],
     },
     artifacts: { revealed: [], pending: null },
     journal: { entries: [], pending: false, dismissedCount: 0 },
@@ -1314,18 +1340,20 @@ export function spawnRockDrop(
     tier = t < TUNING.SEED_TIER_2_THRESHOLD ? 1 : t < TUNING.SEED_TIER_3_THRESHOLD ? 2 : 3;
   }
 
-  // Drops launch out of the rock with real physics — initial velocity
-  // is a sideways pop biased toward the pile corner. Gravity, floor
-  // bounce, and pairwise collision in rockDropsSystem do the rest.
-  // Tight aim so drops converge into the corner mound; the corner
-  // becomes the natural rest position because gravity + restitution +
-  // friction bleed off horizontal momentum on each contact.
+  // Drops launch out of the rock with real physics — direction is a
+  // random angle in a wide cone biased toward the pile corner so the
+  // burst reads as a spray rather than a synchronized jet. Most drops
+  // arc cornerward, but ~20% pop the other way and bounce back off the
+  // wall, which sells the chaos. Gravity, floor bounce, and pairwise
+  // collision in rockDropsSystem do the rest.
   const cornerBias = Math.sign(TUNING.ROCK_PILE_CORNER_X - originX) || 1;
-  // Horizontal pop: enough to clear the boulder shoulder, varied so
-  // drops don't all stack on the same column on first landing.
-  const vx = cornerBias * (110 + Math.random() * 80);
-  // Vertical pop: a hop, not a rocket — gravity finishes the arc.
-  const vy = -180 - Math.random() * 60;
+  const dir = Math.random() < 0.8 ? cornerBias : -cornerBias;
+  // Angle measured from straight up: small angle = mostly vertical pop,
+  // wide angle = sideways skim. ~22°–75° gives a believable spray cone.
+  const angle = (22 + Math.random() * 53) * (Math.PI / 180);
+  const speed = 180 + Math.random() * 110;
+  const vx = Math.sin(angle) * speed * dir;
+  const vy = -Math.cos(angle) * speed;
   // Settle target fields are kept on the entity for save-shape compat;
   // the new physics simulation ignores them.
   const settleX = TUNING.ROCK_PILE_CORNER_X;
@@ -1344,13 +1372,19 @@ export function spawnRockDrop(
     settled: false,
     claimedBy: null,
     spawnedAtMs: state.elapsedMs,
+    rotation: Math.random() * Math.PI * 2,
+    // Tumble rate scales loosely with launch speed so fast pops spin
+    // faster. Sign is random so half tumble each way.
+    spin: (Math.random() - 0.5) * 18,
   };
   state.rockDrops.push(drop);
   return drop;
 }
 
 // Convert accumulated damage into drop spawns. Called immediately after
-// a hit lands. Each whole point of accumulated damage spawns one drop.
+// a hit lands. Each whole point of accumulated damage triggers a burst
+// of 1–3 drops at the strike point so loot reads as a chunky spall
+// rather than a metronome of singletons.
 export function applyDropBudget(
   state: GameState,
   rockX: number,
@@ -1360,11 +1394,65 @@ export function applyDropBudget(
   let spawned = 0;
   while (state.digSite.dropBudget >= 1) {
     state.digSite.dropBudget -= 1;
-    if (rockDropPileFull(state)) break;
-    spawnRockDrop(state, rockX, rockY, settleBaseY);
-    spawned += 1;
+    const burst = 1 + Math.floor(Math.random() * 3); // 1, 2, or 3
+    for (let i = 0; i < burst; i++) {
+      if (rockDropPileFull(state)) return spawned;
+      spawnRockDrop(state, rockX, rockY, settleBaseY);
+      spawned += 1;
+    }
   }
   return spawned;
+}
+
+// Queue a cantor's cast so its damage + drop spawns land at the same
+// moment the visual spark arrives at the rock. ETA is derived from the
+// spark's projectile speed (matched in World.emitSpark) and the actual
+// flight distance, so close-range cantors hit faster than far ones.
+export function queuePendingHit(
+  state: GameState,
+  damage: number,
+  originX: number,
+  originY: number,
+  strikeX: number,
+  strikeY: number,
+  settleBaseY: number,
+): void {
+  const dx = strikeX - originX;
+  const dy = strikeY - originY;
+  const dist = Math.hypot(dx, dy);
+  const etaMs = (dist / TUNING.CANTOR_PROJECTILE_SPEED) * 1000;
+  state.digSite.pendingHits.push({
+    damage,
+    strikeX,
+    strikeY,
+    settleBaseY,
+    etaMs,
+  });
+}
+
+// Tick pending hits forward and resolve any that have landed. Resolution
+// applies damage to the rock and converts it into drop spawns. If the
+// rock is no longer active (already revealing/sealed) we silently drop
+// the hit — the spark visually fizzles into the open artifact glow.
+export function tickPendingHits(state: GameState, dtMs: number): void {
+  const pending = state.digSite.pendingHits;
+  if (pending.length === 0) return;
+  let write = 0;
+  for (let read = 0; read < pending.length; read++) {
+    const hit = pending[read];
+    hit.etaMs -= dtMs;
+    if (hit.etaMs > 0) {
+      if (write !== read) pending[write] = hit;
+      write += 1;
+      continue;
+    }
+    if (state.digSite.state === 'active') {
+      state.digSite.hp = Math.max(0, state.digSite.hp - hit.damage);
+      state.digSite.dropBudget += hit.damage * TUNING.DROP_RATE_PER_DAMAGE;
+      applyDropBudget(state, hit.strikeX, hit.strikeY, hit.settleBaseY);
+    }
+  }
+  pending.length = write;
 }
 
 // ---- Cantor stat helpers ----

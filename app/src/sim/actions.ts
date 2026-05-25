@@ -95,6 +95,7 @@ export function dismissArtifact(state: GameState): ActionResult {
   state.digSite.hp = spec.nextSiteMaxHp;
   state.digSite.state = 'active';
   state.digSite.dropBudget = 0;
+  state.digSite.pendingHits = [];
   return { ok: true };
 }
 

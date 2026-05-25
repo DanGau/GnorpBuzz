@@ -18,7 +18,7 @@ import {
   spendHoney,
   manaCostFor,
   digSiteAcceptingDamage,
-  applyDropBudget,
+  queuePendingHit,
   nearestEmptyMeadowTile,
   plantFlowerAt,
   removeRockDrop,
@@ -876,31 +876,26 @@ export class Bee {
             addHoney(state, 1);
           }
 
-          // Apply damage immediately to the dig site. The flying spark is
-          // cosmetic — keeps the sim deterministic and lets the projectile
-          // be skipped at zero cost in headless tests.
+          // Queue the hit so damage + drop spawns resolve when the visual
+          // spark actually reaches the rock. Without this, the cracks
+          // deepen and seeds pop out at cast-time — before the spark has
+          // travelled — and the cause/effect reads as desynced.
           const synergy = cellSynergy(state.hive, this.cellQ, this.cellR);
           const dmg =
             cantorDamagePerSpark(state) *
             (1 + TUNING.SYNERGY_CANTOR_DAMAGE * synergy);
-          state.digSite.hp = Math.max(0, state.digSite.hp - dmg);
-
-          // Convert this hit's damage into rock-drop spawns. Drops emerge
-          // from the strike point and arc into the pile near the boulder
-          // base, where foragers will haul them away. The pile-base Y is
-          // a band below the boulder anchor; see layout.ts.
-          state.digSite.dropBudget += dmg * TUNING.DROP_RATE_PER_DAMAGE;
           const site = world.digSite;
-          const strike = site ? site.strikePoint() : { x: this.x, y: this.y };
+          const strike = site
+            ? site.randomStrikePoint()
+            : { x: this.x, y: this.y };
           // Settle band sits just below the boulder visual — drops mound
           // up at the base on the meadow ground.
           const settleBaseY = (site ? site.y : 0) + WORLD.DIG_SITE_RADIUS - 8;
-          applyDropBudget(state, strike.x, strike.y, settleBaseY);
+          queuePendingHit(state, dmg, this.x, this.y, strike.x, strike.y, settleBaseY);
 
           // Visual spark heading toward the rock.
           if (site) {
-            const sp = site.strikePoint();
-            world.emitSpark(this.x, this.y, sp.x, sp.y);
+            world.emitSpark(this.x, this.y, strike.x, strike.y);
             world.particles.emit('sparkle', this.x, this.y, 2);
           }
           this.pulseShake(state, 90);
