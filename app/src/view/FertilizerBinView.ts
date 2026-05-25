@@ -82,7 +82,12 @@ export class FertilizerBinView {
     this.pulse += dtMs / 1000;
     const bob = Math.sin(this.pulse * 1.2 + this.bobPhase) * 0.4;
     this.container.y = WORLD.FERTILIZER_BIN.y + bob;
-    this.container.scale.set(1 + this.flash * 0.08);
+    // Punch-and-settle (matches PollenSiloView). Peaks at 1.18 on impact
+    // then dips below 1.0 around 75% of the decay before settling — the
+    // back-overshoot is what reads as "this thing just got hit" instead
+    // of "this thing is now glowing."
+    const punch = 1 + this.flash * 0.18 - this.flash * (1 - this.flash) * 0.10;
+    this.container.scale.set(punch);
 
     this.drawFill();
     this.label.text = `${f}/${cap}`;

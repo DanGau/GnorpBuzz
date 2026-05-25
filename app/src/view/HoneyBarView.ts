@@ -133,8 +133,12 @@ export class HoneyBarView {
     this.container.y = WORLD.HIVE.y + JAR_Y_OFFSET + bob;
 
     // Reaction-driven scale + glow. Produce = bump up; consume = squish down.
-    const scaleBump =
-      1 + this.produceFlash * 0.15 - this.consumeFlash * 0.08;
+    // The `f * (1-f) * 0.10` term carves out a tiny undershoot near 75%
+    // of the decay so the bump settles with a small back-elastic dip
+    // rather than gliding back to rest — that's the "punch" feel.
+    const produce =
+      this.produceFlash * 0.18 - this.produceFlash * (1 - this.produceFlash) * 0.10;
+    const scaleBump = 1 + produce - this.consumeFlash * 0.08;
     this.container.scale.set(scaleBump);
 
     this.drawFill(honey, cap);

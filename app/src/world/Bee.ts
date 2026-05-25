@@ -132,6 +132,7 @@ export type BeeState =
   // the meadow (pollen) and the rock pile (seeds + fertilizer). Each idle
   // tick they pick the NEAREST viable task.
   | 'flying-to-drop'           // fetching a claimed drop from the rock pile
+  | 'lifting-drop'             // hovering over the pile while the drop tweens up into the bee
   | 'flying-to-plant'          // carrying a seed to the nearest empty meadow tile
   | 'flying-to-fertilizer-bin' // carrying fertilizer to the Fertilizer Bin
   // worker (honey-worker or wax-worker): home → forager pile → home cycle
@@ -150,6 +151,14 @@ export type BeeCarrying = 'none' | 'pollen' | 'seed' | 'fertilizer';
 const ARRIVE_THRESHOLD = 4;
 const IDLE_WANDER_RADIUS = 30;
 export const TIP_DURATION_MS = 700;
+// How long a forager hovers over the pile pulling a drop up before
+// committing to its next flight. 150ms is long enough to read as "the
+// rock is being plucked" without slowing the haul loop perceptibly.
+const LIFT_DURATION_MS = 150;
+// How long the carry sprite pops in with a back.out scale envelope after
+// the lift completes. Slightly longer than the lift so the payload feels
+// like it lands on the bee with weight.
+const CARRY_FLASH_DURATION_MS = 220;
 
 let beeIdSeq = 1;
 
@@ -203,6 +212,15 @@ export class Bee {
   carrySeedTier: 1 | 2 | 3;
   plantTargetX: number;
   plantTargetY: number;
+  // Pickup-lift bookkeeping. While in `lifting-drop`, the bee hovers in
+  // place for `LIFT_DURATION_MS` while the drop's sprite tweens up to
+  // the bee (the lift fields live on the RockDrop entity, so RockDropView
+  // can interpolate without touching the drop's physics position).
+  // After the lift completes, `carryFlashMs` runs the carry sprite
+  // through a back.out pop-in so the payload appears with weight rather
+  // than snapping into being.
+  liftElapsedMs: number;
+  carryFlashMs: number;
   // Sky parking spot above the hive — per-bee fixed, used as the wander
   // center for any idle state and the destination for return-to-base
   // flights. Replaces the old "wander around the home cell" behavior so
@@ -263,6 +281,8 @@ export class Bee {
     this.carrySeedTier = 1;
     this.plantTargetX = 0;
     this.plantTargetY = 0;
+    this.liftElapsedMs = 0;
+    this.carryFlashMs = 0;
     // Cantor's cast position — sits inside the park zone, slightly above
     // the other bees parked there so multiple cantors stack cleanly along
     // the top of the cloud rather than weaving through the drifters below.
@@ -341,6 +361,9 @@ export class Bee {
 
   update(dtMs: number, state: GameState, world: World): void {
     this.flapPhase += (dtMs / 1000) * 30;
+    if (this.carryFlashMs > 0) {
+      this.carryFlashMs = Math.max(0, this.carryFlashMs - dtMs);
+    }
 
     if (this.state === 'idle') {
       this.idleAccumulatedMs += dtMs;
@@ -481,29 +504,68 @@ export class Bee {
       }
       case 'flying-to-drop': {
         if (this.flyToward(dtMs, state)) {
-          // Arrived. Pick up the drop (remove from pile) and decide where
-          // to go next based on kind. If the drop vanished mid-flight
-          // (defensive — the claim should prevent this), abort to idle.
+          // Arrived. Start the lift tween — the drop visibly travels up
+          // into the bee over LIFT_DURATION_MS rather than disappearing
+          // on contact. If the drop vanished mid-flight (defensive — the
+          // claim should prevent this), abort to idle.
           const drop = state.rockDrops.find((d) => d.id === this.claimedDropId);
           if (!drop) {
             this.claimedDropId = null;
             this.returnToIdle(world);
             break;
           }
+          // Snapshot the start positions onto the drop so RockDropView
+          // can interpolate the sprite without us touching the entity's
+          // own x/y (which the physics system still reads for stacking
+          // and support checks on neighbors).
+          this.liftElapsedMs = 0;
+          drop.liftT = 0;
+          drop.liftFromX = drop.x;
+          drop.liftFromY = drop.y;
+          drop.liftToX = this.x;
+          drop.liftToY = this.y;
+          this.state = 'lifting-drop';
+        }
+        break;
+      }
+      case 'lifting-drop': {
+        const drop = state.rockDrops.find((d) => d.id === this.claimedDropId);
+        if (!drop) {
+          // Drop vanished mid-lift (couldn't happen short of a debug grant
+          // or save-load; the claim should hold it). Bail cleanly.
+          this.claimedDropId = null;
+          this.returnToIdle(world);
+          break;
+        }
+        this.liftElapsedMs += dtMs;
+        const t = Math.min(1, this.liftElapsedMs / LIFT_DURATION_MS);
+        // Keep the lift target tracking the bee's live position in case
+        // the bee bobs slightly. (Currently it doesn't during lifting,
+        // but this keeps it correct under any future hover motion.)
+        drop.liftToX = this.x;
+        drop.liftToY = this.y;
+        drop.liftT = t;
+        // Spin up on the way out — a final flourish that reads as torque.
+        // Rotation is purely cosmetic so updating it on the entity is fine.
+        drop.rotation += 22 * t * (dtMs / 1000);
+        if (t >= 1) {
+          // Lift complete — finalize the pickup. Decide destination, fire
+          // sparkles + carry-pop, then transition.
           this.pulseShake(state, 80);
-          world.particles.emit('sparkle', this.x, this.y, 2);
+          world.particles.emit('sparkle', this.x, this.y, 3);
           if (drop.kind === 'seed') {
             this.carrying = 'seed';
             this.carrySeedTier = drop.tier;
-            // Pick a planting tile now so the flight is committed. If the
-            // meadow filled up since this bee left the park spot, the
-            // seed is lost — drop the pickup and go idle. (User accepted
-            // that bad management can waste resources.)
             const tile = nearestEmptyMeadowTile(state, this.x, this.y);
             removeRockDrop(state, drop.id);
             this.claimedDropId = null;
+            this.carryFlashMs = CARRY_FLASH_DURATION_MS;
             if (!tile) {
+              // Meadow filled while the bee was hauling — drop the seed
+              // and go idle. (User accepted that bad management wastes
+              // resources.)
               this.carrying = 'none';
+              this.carryFlashMs = 0;
               this.returnToIdle(world);
               break;
             }
@@ -512,10 +574,10 @@ export class Bee {
             this.setFlightTarget(tile.x, tile.y - 4);
             this.state = 'flying-to-plant';
           } else {
-            // Fertilizer — deliver to the bin.
             this.carrying = 'fertilizer';
             removeRockDrop(state, drop.id);
             this.claimedDropId = null;
+            this.carryFlashMs = CARRY_FLASH_DURATION_MS;
             this.setFlightTarget(
               WORLD.FERTILIZER_BIN.x + this.seed * 4,
               WORLD.FERTILIZER_BIN.y - 6,

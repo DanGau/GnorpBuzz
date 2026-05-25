@@ -397,6 +397,11 @@ export interface DigSiteData {
   // so the rock's cracks deepen and seeds pop out at the same moment the
   // visual spark hits the boulder — not when the cantor fires.
   pendingHits: PendingHit[];
+  // Transient list of strike points whose hits resolved this frame.
+  // Populated by `tickPendingHits` and drained every frame by
+  // WorldRenderer to spawn spall particles at the contact site. Not
+  // persisted — purely a sim→view event channel.
+  recentStrikes: { x: number; y: number }[];
 }
 
 export interface PendingHit {
@@ -452,6 +457,20 @@ export interface RockDrop {
   // visibly roll; settled drops freeze at whatever angle they landed.
   rotation: number;
   spin: number;
+  // Per-drop multiplicative color jitter (~0.95–1.05). Applied as sprite
+  // tint in RockDropView so no two drops are identical pixels — kills the
+  // "asset" feel of the pile. Stored as a packed tint (0xRRGGBB).
+  tintJitter?: number;
+  // Pickup-lift progress 0→1 while a forager is plucking this drop out of
+  // the pile. RockDropView reads it to interpolate the sprite from
+  // (liftFromX/Y) to (liftToX/Y) — the entity's own x/y is left alone so
+  // the physics system (which uses x/y for stacking and support checks)
+  // is undisturbed during the 150ms visual lift. Cleared on removal.
+  liftT?: number;
+  liftFromX?: number;
+  liftFromY?: number;
+  liftToX?: number;
+  liftToY?: number;
 }
 
 // ---- Ascent (endgame) ----
@@ -544,11 +563,12 @@ export const TUNING = {
   // Drop entity radius, used by the circle-collider physics. Drops are
   // dynamic circles with gravity, floor collision, pairwise restitution,
   // and a sleep threshold that settles them once velocity dies down.
-  ROCK_DROP_RADIUS: 3.5,
+  ROCK_DROP_RADIUS: 6,
   ROCK_DROP_GRAVITY: 1100,
-  // Bounciness on collision (0 = inelastic, 1 = perfectly elastic). Low
-  // by design — pebbles thudding, not super-balls.
-  ROCK_DROP_RESTITUTION: 0.18,
+  // Bounciness on collision (0 = inelastic, 1 = perfectly elastic).
+  // Tuned to give one lively first-bounce read without the pile turning
+  // into a shimmering mess — much below 0.25 and drops thud-die.
+  ROCK_DROP_RESTITUTION: 0.32,
   // Velocity damping applied per second when in contact with the floor
   // (sliding friction). High by design — pebbles don't slide far.
   ROCK_DROP_FRICTION: 0.92,
@@ -836,6 +856,7 @@ export function createInitialState(): GameState {
       state: 'active',
       dropBudget: 0,
       pendingHits: [],
+      recentStrikes: [],
     },
     artifacts: { revealed: [], pending: null },
     journal: { entries: [], pending: false, dismissedCount: 0 },
@@ -1297,6 +1318,17 @@ function nextRockDropId(): string {
   return `rd-${rockDropCounter}`;
 }
 
+// Per-channel ±5% value jitter packed back into a 0xRRGGBB tint, so each
+// drop's sprite renders slightly off from the canonical color and the
+// pile reads as natural rubble rather than stamped assets.
+function jitterTint(): number {
+  // Each channel is a 0.95–1.05 multiplier rounded to a byte; the upper
+  // end can exceed 255, so clamp before packing — Pixi rejects tints
+  // whose channels overflow into the alpha byte.
+  const m = () => Math.max(0, Math.min(255, Math.round(255 * (0.95 + Math.random() * 0.1))));
+  return (m() << 16) | (m() << 8) | m();
+}
+
 // True if the pile is at the hard cap. Cantors stop casting while this is
 // true so they don't waste mana on an invincible rock. The flip happens
 // automatically as soon as a forager hauls one drop away.
@@ -1376,6 +1408,7 @@ export function spawnRockDrop(
     // Tumble rate scales loosely with launch speed so fast pops spin
     // faster. Sign is random so half tumble each way.
     spin: (Math.random() - 0.5) * 18,
+    tintJitter: jitterTint(),
   };
   state.rockDrops.push(drop);
   return drop;
@@ -1450,6 +1483,7 @@ export function tickPendingHits(state: GameState, dtMs: number): void {
       state.digSite.hp = Math.max(0, state.digSite.hp - hit.damage);
       state.digSite.dropBudget += hit.damage * TUNING.DROP_RATE_PER_DAMAGE;
       applyDropBudget(state, hit.strikeX, hit.strikeY, hit.settleBaseY);
+      state.digSite.recentStrikes.push({ x: hit.strikeX, y: hit.strikeY });
     }
   }
   pending.length = write;

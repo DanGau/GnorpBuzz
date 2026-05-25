@@ -92,7 +92,12 @@ export class PollenSiloView {
     // Almost no bob — silos sit on the ground.
     const bob = Math.sin(this.pulse * 1.2 + this.bobPhase) * 0.4;
     this.container.y = WORLD.POLLEN_SILO.y + bob;
-    this.container.scale.set(1 + this.flash * 0.08);
+    // Punch-and-settle: scale peaks at 1.18 on impact then crosses
+    // slightly below 1.0 around 75% of the decay before settling. The
+    // tiny undershoot is the "back" in easeOutBack — what gives the
+    // bump weight rather than feeling like a static highlight pop.
+    const punch = 1 + this.flash * 0.18 - this.flash * (1 - this.flash) * 0.10;
+    this.container.scale.set(punch);
 
     this.drawFill(state, dtMs);
     this.drawGlow();

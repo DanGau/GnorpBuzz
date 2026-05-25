@@ -62,6 +62,7 @@ export function deserialize(blob: string): GameState {
   }
   if (typeof merged.digSite.dropBudget !== 'number') merged.digSite.dropBudget = 0;
   if (!Array.isArray(merged.digSite.pendingHits)) merged.digSite.pendingHits = [];
+  if (!Array.isArray(merged.digSite.recentStrikes)) merged.digSite.recentStrikes = [];
 
   // Defensive defaults — fields that may be missing from partial saves.
   if (!merged.flowers) merged.flowers = base.flowers;

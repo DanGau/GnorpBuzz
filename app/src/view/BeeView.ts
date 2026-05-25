@@ -114,7 +114,19 @@ export class BeeView {
         (1 + stretchY) * flap * windupSquash,
       );
       sprite.carry.rotation = 0;
-      sprite.carry.scale.set(1, 1);
+      // Carry punch-in — after the bee plucks a drop, the carry sprite
+      // pops in with an easeOutBack envelope so the payload arrives
+      // with weight rather than snapping into existence. `carryFlashMs`
+      // counts down from CARRY_FLASH_DURATION_MS to 0.
+      let carryScale = 1;
+      if (bee.carryFlashMs > 0) {
+        const t = 1 - bee.carryFlashMs / 220;
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        const u = t - 1;
+        carryScale = 1 + c3 * u * u * u + c1 * u * u;
+      }
+      sprite.carry.scale.set(carryScale, carryScale);
 
       this.drawCarry(sprite.carry, bee.carrying, bee.carryAmount, bee.role, bee.carrySeedTier);
     }
@@ -172,18 +184,18 @@ export class BeeView {
     if (carrying === 'seed') {
       // Tier-tinted teardrop slung below the bee; matches the colors in
       // RockDropView so a hauling forager visibly carries "the same seed
-      // that fell off the rock".
+      // that fell off the rock". Sized to the 1.7× pile-drop scale.
       const tint = seedTier === 3 ? 0xc89a2a : seedTier === 2 ? 0x6a8a2a : 0x5a3a14;
       const glint = seedTier === 3 ? 0xffe890 : seedTier === 2 ? 0xb8d860 : 0x8a6a2a;
-      g.ellipse(0, 5, 2.6, 3.2).fill(tint);
-      g.ellipse(-0.6, 4.4, 1.0, 1.4).fill({ color: glint, alpha: 0.8 });
-      if (seedTier === 3) g.circle(0, 5, 5).fill({ color: 0xffe890, alpha: 0.2 });
+      g.ellipse(0, 6, 4.4, 5.4).fill(tint);
+      g.ellipse(-1.0, 5.0, 1.7, 2.4).fill({ color: glint, alpha: 0.8 });
+      if (seedTier === 3) g.circle(0, 6, 8).fill({ color: 0xffe890, alpha: 0.2 });
       return;
     }
     if (carrying === 'fertilizer') {
-      g.ellipse(0, 5, 3.0, 2.4).fill(0x4a3210);
-      g.circle(0.6, 4.0, 0.9).fill({ color: 0x6e8c2a, alpha: 0.95 });
-      g.circle(-0.5, 3.8, 0.5).fill({ color: 0x8aa83a, alpha: 0.85 });
+      g.ellipse(0, 6, 5.1, 4.1).fill(0x4a3210);
+      g.circle(1.0, 4.5, 1.5).fill({ color: 0x6e8c2a, alpha: 0.95 });
+      g.circle(-0.8, 4.2, 0.9).fill({ color: 0x8aa83a, alpha: 0.85 });
       return;
     }
   }

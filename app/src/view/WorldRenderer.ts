@@ -358,7 +358,16 @@ export class WorldRenderer {
     this.pollenSiloView.update(state, dtMs);
     this.waxBlockView.update(state, dtMs, world);
     this.fertilizerBinView.update(state, dtMs);
-    this.rockDropView.update(state);
+    // Spall at every freshly-resolved strike — drained here so the sim
+    // layer doesn't need a particle dependency. 6 dust + 2 sparkle per
+    // hit gives the cantor cast a satisfying *crack* rather than the
+    // four-pixel fizzle the homing arrival burst alone produced.
+    for (const s of state.digSite.recentStrikes) {
+      world.particles.emit('crashDust', s.x, s.y, 6);
+      world.particles.emit('sparkle', s.x, s.y, 2);
+    }
+    state.digSite.recentStrikes.length = 0;
+    this.rockDropView.update(state, world, dtMs);
     this.beeView.update(world, state.elapsedMs);
     this.digSiteView.update(state, dtMs, selectedId === 'dig-site');
     this.particleView.update(world.particles);
