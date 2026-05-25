@@ -572,19 +572,44 @@ export const TUNING = {
   // Velocity damping applied per second when in contact with the floor
   // (sliding friction). High by design — pebbles don't slide far.
   ROCK_DROP_FRICTION: 0.92,
-  // Air drag — small per-second decay applied to all unsettled drops so
-  // even bouncing pebbles bleed horizontal momentum.
+  // Air drag — small per-second decay applied to drop horizontal velocity
+  // so even bouncing pebbles bleed sideways momentum and don't skid forever.
   ROCK_DROP_AIR_DRAG: 0.25,
+  // Linear damping — small per-second bleed on BOTH axes. Kills the
+  // residual sub-threshold jitter that gravity-of-this-step + position
+  // correction inject every frame; piles visibly come to rest in a few
+  // frames instead of shimmering forever. (Box2D ships ~0 for damping
+  // and relies on island sleep; we want "alive without sleep" so we
+  // burn a little energy budget for it.)
+  ROCK_DROP_LINEAR_DAMPING: 0.6,
   // Bouncing below this |vy| just rests on the floor instead of
   // hopping up another microbounce.
   ROCK_DROP_BOUNCE_FLOOR_VY: 40,
-  // Speed threshold below which a supported drop falls asleep.
-  // Kept low so drops have visible roll-out time before snapping to
-  // settled — the no-slip rolling needs a few rotations to read.
-  ROCK_DROP_SLEEP_VEL: 8,
+  // Restitution threshold (Box2D's `b2_velocityThreshold` analogue).
+  // Pairwise contacts whose closing speed is below this are treated as
+  // fully inelastic regardless of `restitution`. Without this, even a
+  // soft 5 px/s bump between resting drops reflects back at 0.32x and
+  // the pile shivers forever.
+  ROCK_DROP_VEL_THRESHOLD: 35,
+  // Position-correction slop. Penetration up to this much is ignored
+  // (no positional fix, no impulse). Beyond it we correct CORRECTION %
+  // per substep — lazily, over multiple frames, instead of snapping.
+  // Snapping is what re-injects bounce energy and keeps stacks alive.
+  ROCK_DROP_POS_SLOP: 0.5,
+  ROCK_DROP_POS_CORRECTION: 0.3,
+  // Sub-stepping. Each render frame runs the solver this many times at
+  // dt/SUBSTEPS. Halves the per-step `g·dt` impulse, which halves the
+  // artificial energy contact resolution has to remove.
+  ROCK_DROP_SUBSTEPS: 2,
+  // Soft snap-to-rest threshold. After all substeps, any drop whose
+  // speed is below this AND is supported (floor or settled neighbor)
+  // has its velocity zeroed and is marked `settled` so foragers can
+  // claim it. This is the cousin of full island sleep — we still run
+  // integration on settled drops (so a new drop landing on them feels
+  // alive) but the velocity gets clamped flat every frame.
+  ROCK_DROP_SETTLE_VEL: 12,
   // Closing speed required to knock a settled drop loose on contact.
-  // Sits well above SLEEP_VEL so the pile doesn't shimmer from soft
-  // contacts but a fresh drop falling from the rock will jostle it.
+  // Settled drops are immovable until something hits them hard enough.
   ROCK_DROP_WAKE_VEL: 90,
   CANTOR_MANA_COST: 1,
 

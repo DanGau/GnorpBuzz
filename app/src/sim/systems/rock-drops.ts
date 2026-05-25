@@ -3,21 +3,35 @@ import { TUNING } from '../state';
 
 // Circle-collider physics for the rock-drop pile.
 //
-// Each drop is a 2D circle subject to gravity, a floor, and pairwise
-// contact with every other drop. We use:
-//   - Gravity integration (semi-implicit Euler)
-//   - Floor as a half-space at ROCK_PILE_FLOOR_Y; vy bounces with
-//     restitution, vx loses energy to friction while in contact
-//   - Pairwise circle-vs-circle: position correction to resolve overlap,
-//     then a normal-impulse exchange for the bounce response
-//   - Sleep / settle: a drop with low velocity that's resting on the
-//     floor or on another drop becomes inert (foragers can claim it,
-//     it stops costing physics work). Settled drops are immovable
-//     obstacles for falling drops, so the pile is self-supporting.
+// Design goal: piles must visibly *come to rest* in a handful of frames,
+// but also feel *alive* — landing a new drop on a stack should jostle
+// it, and there is no hard "sleep flag" gate that skips integration.
+// The whole pile re-integrates every substep. Rest emerges from the
+// combination of techniques rather than a discontinuity.
+//
+// Anti-jitter recipe (Box2D + PBD borrowings):
+//   - Sub-stepping (SUBSTEPS=2). Halves `g·dt` per step, halving the
+//     artificial energy each contact resolution has to remove.
+//   - Linear damping. A small per-second bleed on both axes that kills
+//     residual sub-threshold jitter the velocity threshold misses.
+//   - Restitution threshold (Box2D's b2_velocityThreshold). Closing
+//     speeds below it are treated as fully inelastic regardless of `e`.
+//     Without this, even 0.32 restitution makes piles immortal.
+//   - Position-correction slop. Penetration up to POS_SLOP is ignored;
+//     beyond it we correct only POS_CORRECTION % per substep. Snapping
+//     out of overlap is what re-injects bounce energy.
+//   - Floor bounce-cutoff. |vy| below threshold just rests on the floor
+//     instead of micro-bouncing.
+//
+// `settled` is kept as a *derived* flag (re-evaluated every frame): if
+// a drop's speed is below SETTLE_VEL and it's supported, we clamp its
+// velocity to zero and mark it pickable. Settled drops are immovable
+// for soft contacts (mass=∞) but a hard hit (closingSpeed > WAKE_VEL)
+// flips them back to dynamic — that propagation is what makes a fresh
+// drop landing on the stack still feel reactive.
 //
 // We do NOT use a spatial hash — at ROCK_DROP_CAP (250) the N² loop is
-// ~31k pair checks per tick, well within budget. Add a grid if the cap
-// climbs significantly.
+// ~31k pair checks per substep, well within budget.
 
 export function rockDropsSystem(state: GameState, dtMs: number): void {
   const dt = dtMs / 1000;
@@ -25,71 +39,106 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
   const drops = state.rockDrops;
   if (drops.length === 0) return;
 
+  const substeps = TUNING.ROCK_DROP_SUBSTEPS;
+  const subDt = dt / substeps;
+  for (let s = 0; s < substeps; s++) {
+    integrateSubstep(drops, subDt);
+  }
+
+  // Soft snap-to-rest, evaluated once per render frame. Doing it once
+  // per substep would over-clamp moving drops near rest; once per frame
+  // is the right cadence to mark "pickable by foragers" without fighting
+  // the integrator inside the substep loop.
+  const r = TUNING.ROCK_DROP_RADIUS;
+  const floorY = TUNING.ROCK_PILE_FLOOR_Y - 2;
+  const settleVel2 = TUNING.ROCK_DROP_SETTLE_VEL * TUNING.ROCK_DROP_SETTLE_VEL;
+  for (const d of drops) {
+    const speed2 = d.vx * d.vx + d.vy * d.vy;
+    if (speed2 < settleVel2 && isSupported(d, drops, r, floorY)) {
+      d.vx = 0;
+      d.vy = 0;
+      d.spin = 0;
+      d.settled = true;
+    } else if (speed2 > settleVel2 * 4) {
+      // Faster-than-settle drops are definitely not at rest. Drops in
+      // the gray zone (settle..2×settle) keep their previous flag —
+      // hysteresis so a drop teetering at the threshold doesn't flicker
+      // on and off every frame.
+      d.settled = false;
+    }
+  }
+}
+
+function integrateSubstep(drops: RockDrop[], dt: number): void {
   const r = TUNING.ROCK_DROP_RADIUS;
   const minDist = r * 2;
   const minDist2 = minDist * minDist;
   const floorY = TUNING.ROCK_PILE_FLOOR_Y - 2;
   const gravity = TUNING.ROCK_DROP_GRAVITY;
   const restitution = TUNING.ROCK_DROP_RESTITUTION;
+  const velThreshold = TUNING.ROCK_DROP_VEL_THRESHOLD;
+  const slop = TUNING.ROCK_DROP_POS_SLOP;
+  const correction = TUNING.ROCK_DROP_POS_CORRECTION;
   const friction = Math.pow(1 - TUNING.ROCK_DROP_FRICTION, dt);
   const airDrag = Math.pow(1 - TUNING.ROCK_DROP_AIR_DRAG, dt);
-  const sleepVel2 =
-    TUNING.ROCK_DROP_SLEEP_VEL * TUNING.ROCK_DROP_SLEEP_VEL;
+  const linearDamp = Math.pow(1 - TUNING.ROCK_DROP_LINEAR_DAMPING, dt);
+  const spinDrag = Math.pow(0.65, dt);
+  const rightWall = TUNING.ROCK_PILE_RIGHT_WALL - r;
+  const leftWall = TUNING.ROCK_PILE_LEFT_WALL + r;
 
-  // 1) Gravity + air drag + integration for unsettled drops. Air drag
-  //    bleeds horizontal momentum even mid-bounce so drops don't skid
-  //    forever across the map between contacts. Rotation integrates
-  //    every frame with its own air-drag analogue so spin doesn't
-  //    persist forever once the drop slows.
-  const spinDrag = Math.pow(0.65, dt); // light bleed mid-air
+  // 1) Gravity + damping + integration. Settled drops are skipped so
+  //    they truly hold their stack position — without this, even with
+  //    snap-to-rest the bottom of a stack would creep down by the
+  //    uncorrected portion of `g·dt` every frame.
   for (const d of drops) {
     if (d.settled) continue;
     d.vy += gravity * dt;
-    d.vx *= airDrag;
+    d.vx *= airDrag * linearDamp;
+    d.vy *= linearDamp;
     d.x += d.vx * dt;
     d.y += d.vy * dt;
     d.rotation += d.spin * dt;
     d.spin *= spinDrag;
   }
 
-  // 2) Floor + side walls. The pile is fenced between LEFT_WALL (the
-  //    boulder face) and RIGHT_WALL (just inside the world edge). Drops
-  //    drifting past either wall bounce back inward; the floor below
-  //    catches them with friction. Drops with |vy| below the bounce
-  //    threshold just rest on the floor — avoids endless microbounces.
-  const rightWall = TUNING.ROCK_PILE_RIGHT_WALL - r;
-  const leftWall = TUNING.ROCK_PILE_LEFT_WALL + r;
+  // 2) Floor + side walls. Position correction uses slop — small
+  //    overshoots are absorbed silently; large overshoots are corrected
+  //    a fraction at a time. Velocity response uses the threshold so
+  //    soft floor taps don't micro-bounce.
   for (const d of drops) {
     if (d.settled) continue;
     if (d.y > floorY) {
-      d.y = floorY;
-      if (d.vy > TUNING.ROCK_DROP_BOUNCE_FLOOR_VY) {
+      const over = d.y - floorY;
+      if (over > slop) d.y -= (over - slop) * correction;
+      if (d.vy > velThreshold) {
         d.vy = -d.vy * restitution;
       } else if (d.vy > 0) {
         d.vy = 0;
       }
       d.vx *= friction;
-      // Rolling contact — lock spin to translation (no-slip rolling) so
-      // the drop's rotation reads as caused by its motion across the
-      // ground, not as a separate inherited tumble. ω = v / r.
+      // Rolling contact — couple spin to translation (ω = v/r) so the
+      // drop's rotation reads as caused by its motion across the ground.
       d.spin = d.vx / r;
     }
     if (d.x > rightWall) {
-      d.x = rightWall;
-      if (d.vx > 0) d.vx = -d.vx * restitution;
+      const over = d.x - rightWall;
+      if (over > slop) d.x -= (over - slop) * correction;
+      if (d.vx > velThreshold) d.vx = -d.vx * restitution;
+      else if (d.vx > 0) d.vx = 0;
     }
     if (d.x < leftWall) {
-      d.x = leftWall;
-      if (d.vx < 0) d.vx = -d.vx * restitution;
+      const over = leftWall - d.x;
+      if (over > slop) d.x += (over - slop) * correction;
+      if (d.vx < -velThreshold) d.vx = -d.vx * restitution;
+      else if (d.vx < 0) d.vx = 0;
     }
   }
 
-  // 3) Pairwise circle-vs-circle. Resolve overlap first, then apply a
-  //    normal impulse for any approaching contact. Settled drops are
-  //    "sleeping" obstacles — a hard enough hit (normal closing speed
-  //    above WAKE_VEL) jostles them awake and the contact resolves as
-  //    equal-mass. Soft bumps still treat them as immovable so the pile
-  //    doesn't shimmer every time a forager kicks dust on it.
+  // 3) Pairwise circle-vs-circle. Position correction uses slop +
+  //    fractional fix; velocity response uses the restitution threshold.
+  //    Settled drops are immovable obstacles for soft contacts; a hit
+  //    above WAKE_VEL wakes them back to dynamic so a falling drop can
+  //    still jostle the pile.
   for (let i = 0; i < drops.length; i++) {
     const a = drops[i];
     for (let j = i + 1; j < drops.length; j++) {
@@ -107,14 +156,9 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
       const ny = dy / dist;
       const overlap = minDist - dist;
 
-      // Closing speed along the contact normal. Used both for the
-      // velocity response and the wake threshold.
       const vRelN = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
       const closingSpeed = -vRelN;
 
-      // Wake a sleeping drop if the incoming hit is energetic enough.
-      // Threshold is intentionally above sleep velocity so settled-on-
-      // settled or feather-tap contacts don't ripple through the pile.
       if (
         a.settled !== b.settled &&
         closingSpeed > TUNING.ROCK_DROP_WAKE_VEL
@@ -123,85 +167,45 @@ export function rockDropsSystem(state: GameState, dtMs: number): void {
         if (b.settled) b.settled = false;
       }
 
-      // Position correction — split by mobility so settled drops don't move.
-      if (a.settled) {
-        b.x += nx * overlap;
-        b.y += ny * overlap;
-      } else if (b.settled) {
-        a.x -= nx * overlap;
-        a.y -= ny * overlap;
-      } else {
-        const half = overlap * 0.5;
-        a.x -= nx * half;
-        a.y -= ny * half;
-        b.x += nx * half;
-        b.y += ny * half;
-      }
-
-      // Velocity response — normal-impulse exchange. vRel measured along
-      // the contact normal (b-a). Only resolve approaching velocities.
-      let vax = a.vx;
-      let vay = a.vy;
-      let vbx = b.vx;
-      let vby = b.vy;
-      if (vRelN < 0) {
-        // Mass model: settled = infinite mass, unsettled = mass 1.
-        if (a.settled && !b.settled) {
-          // b bounces off immovable a.
-          const j = -(1 + restitution) * vRelN;
-          vbx += j * nx;
-          vby += j * ny;
-        } else if (b.settled && !a.settled) {
-          // a bounces off immovable b.
-          const j = -(1 + restitution) * vRelN;
-          vax -= j * nx;
-          vay -= j * ny;
+      // Position correction with slop. Settled drops don't move.
+      if (overlap > slop) {
+        const fix = (overlap - slop) * correction;
+        if (a.settled) {
+          b.x += nx * fix;
+          b.y += ny * fix;
+        } else if (b.settled) {
+          a.x -= nx * fix;
+          a.y -= ny * fix;
         } else {
-          // Equal-mass elastic-ish exchange.
-          const j = -(1 + restitution) * vRelN * 0.5;
-          vax -= j * nx;
-          vay -= j * ny;
-          vbx += j * nx;
-          vby += j * ny;
-        }
-        if (!a.settled) {
-          a.vx = vax;
-          a.vy = vay;
-        }
-        if (!b.settled) {
-          b.vx = vbx;
-          b.vy = vby;
+          const half = fix * 0.5;
+          a.x -= nx * half;
+          a.y -= ny * half;
+          b.x += nx * half;
+          b.y += ny * half;
         }
       }
-    }
-  }
 
-  // 4) Sleep check — a drop with very low velocity that's resting on
-  //    the floor or on a settled drop becomes settled itself. Pile grows
-  //    as the topmost drops fall asleep on the shoulders of older ones.
-  for (const d of drops) {
-    if (d.settled) continue;
-    const speed2 = d.vx * d.vx + d.vy * d.vy;
-    if (speed2 > sleepVel2) continue;
-    if (isSupported(d, drops, r, floorY)) {
-      d.vx = 0;
-      d.vy = 0;
-      d.spin = 0;
-      d.settled = true;
-    }
-  }
-
-  // 5) Support check for the already-settled. If a forager hauled a
-  //    drop out of the middle of the pile (the only thing that removes
-  //    drops), or a settled drop was woken in step 3, anything that
-  //    was resting on it would otherwise hang in mid-air. Re-test
-  //    support and unsettle unsupported drops — gravity catches them
-  //    next tick and they re-settle in the gap. The drop itself is
-  //    never destroyed here; this only flips the settled flag.
-  for (const d of drops) {
-    if (!d.settled) continue;
-    if (!isSupported(d, drops, r, floorY)) {
-      d.settled = false;
+      // Velocity response with restitution threshold. Below the
+      // threshold, treat as fully inelastic — the single biggest
+      // anti-jitter knob for stacking.
+      if (vRelN < 0) {
+        const e = closingSpeed < velThreshold ? 0 : restitution;
+        if (a.settled && !b.settled) {
+          const j = -(1 + e) * vRelN;
+          b.vx += j * nx;
+          b.vy += j * ny;
+        } else if (b.settled && !a.settled) {
+          const j = -(1 + e) * vRelN;
+          a.vx -= j * nx;
+          a.vy -= j * ny;
+        } else if (!a.settled && !b.settled) {
+          const j = -(1 + e) * vRelN * 0.5;
+          a.vx -= j * nx;
+          a.vy -= j * ny;
+          b.vx += j * nx;
+          b.vy += j * ny;
+        }
+      }
     }
   }
 }
@@ -212,13 +216,8 @@ function isSupported(
   r: number,
   floorY: number,
 ): boolean {
-  // Sitting on the floor counts.
   if (d.y >= floorY - 0.5) return true;
-  // Or resting on top of a settled drop. d "rests on" o when d is
-  // roughly above o (positive dy from o → d in screen coords means d
-  // is lower numerically… wait, in screen coords y increases downward,
-  // so d being below o means d.y > o.y. d being above o means d.y < o.y).
-  // For d to rest ON o, d should be ABOVE o → d.y < o.y → dy < 0.
+  // Resting on top of a settled drop: d above o → dy < 0 in screen coords.
   const contactRange = r * 2 + 0.4;
   const contactRange2 = contactRange * contactRange;
   for (const o of drops) {
@@ -226,7 +225,7 @@ function isSupported(
     const dx = d.x - o.x;
     if (dx > contactRange || dx < -contactRange) continue;
     const dy = d.y - o.y;
-    if (dy > 0 || dy < -contactRange) continue; // require d to be above o
+    if (dy > 0 || dy < -contactRange) continue;
     if (dx * dx + dy * dy < contactRange2) return true;
   }
   return false;
