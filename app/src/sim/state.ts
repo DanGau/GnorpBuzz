@@ -821,7 +821,29 @@ export function isFlowerGrown(f: FlowerData): boolean {
 // Remove a rock drop from the pile (e.g., when a forager hauls it back).
 export function removeRockDrop(state: GameState, id: string): void {
   const i = state.rockDrops.findIndex((d) => d.id === id);
-  if (i >= 0) state.rockDrops.splice(i, 1);
+  if (i < 0) return;
+  const removed = state.rockDrops[i];
+  state.rockDrops.splice(i, 1);
+  // Wake any drop that was resting above the one we just yanked out so
+  // the pile collapses instead of leaving a floating column. We check a
+  // generous neighborhood (one drop-diameter horizontally, two vertically
+  // upward) because a settled drop's support can be slightly off-center.
+  // Side-neighbors woken here too — losing your neighbor in a tight stack
+  // means you're no longer geometrically wedged in place.
+  const r = TUNING.ROCK_DROP_RADIUS;
+  const hRange = r * 2.2;
+  const vRange = r * 2.4;
+  for (const d of state.rockDrops) {
+    if (!d.settled) continue;
+    const dx = d.x - removed.x;
+    if (dx > hRange || dx < -hRange) continue;
+    const dy = d.y - removed.y;
+    // Only drops AT or ABOVE the removed drop (smaller y). A drop
+    // beneath the removed one isn't losing support; waking it would
+    // just churn the pile.
+    if (dy > 0 || dy < -vRange) continue;
+    d.settled = false;
+  }
 }
 
 // Nearest settled drop not yet claimed by another forager. Used by the
