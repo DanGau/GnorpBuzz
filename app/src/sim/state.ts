@@ -552,14 +552,15 @@ export const TUNING = {
   SEED_TIER_3_THRESHOLD: 0.98,
   // Pile corner: where drops physically mound up after rolling off the
   // rock. The pile is bounded by a right WALL (just inside the world's
-  // right edge) and a left "shoulder" (the boulder face that drops
-  // bounce off if they overshoot back left). The corner is the rest
+  // right edge) and a left wall sitting well past the boulder's left
+  // footprint so the heap can spread across the meadow floor toward the
+  // hive once the rightward stack fills in. The corner is the rest
   // position drops gravitate toward; collision + walls turn the soft
   // arc trajectories into a stacked mound against the right wall.
   ROCK_PILE_CORNER_X: 1240,
   ROCK_PILE_FLOOR_Y: 710,
   ROCK_PILE_RIGHT_WALL: 1272,
-  ROCK_PILE_LEFT_WALL: 1080,
+  ROCK_PILE_LEFT_WALL: 820,
   // Drop entity radius, used by the circle-collider physics. Drops are
   // dynamic circles with gravity, floor collision, pairwise restitution,
   // and a sleep threshold that settles them once velocity dies down.
@@ -597,6 +598,13 @@ export const TUNING = {
   // Snapping is what re-injects bounce energy and keeps stacks alive.
   ROCK_DROP_POS_SLOP: 0.5,
   ROCK_DROP_POS_CORRECTION: 0.3,
+  // Iterative position resolver. Each substep runs the pairwise non-
+  // overlap fix this many times so corrections propagate through a
+  // stack — pushing two drops apart can re-overlap one of them with a
+  // third neighbor, so the solver needs enough passes to converge.
+  // 6 is comfortably above what's needed for piles up to a few drops
+  // tall; bump higher if very tall stacks visibly compress.
+  ROCK_DROP_POS_ITERATIONS: 12,
   // Sub-stepping. Each render frame runs the solver this many times at
   // dt/SUBSTEPS. Halves the per-step `g·dt` impulse, which halves the
   // artificial energy contact resolution has to remove.
@@ -609,8 +617,26 @@ export const TUNING = {
   // alive) but the velocity gets clamped flat every frame.
   ROCK_DROP_SETTLE_VEL: 12,
   // Closing speed required to knock a settled drop loose on contact.
-  // Settled drops are immovable until something hits them hard enough.
+  // With soft settled mass (below) this is now the speed at which we also
+  // flip the settled flag off — the drop will already have absorbed a
+  // little of every contact via the mass ratio, but until this threshold
+  // it stays "pickable" and gravity-skipped.
   ROCK_DROP_WAKE_VEL: 90,
+  // Settled drops respond to collisions as if they were SETTLED_MASS_RATIO×
+  // heavier than dynamic drops, rather than being literally immovable.
+  // Soft contacts now bob the whole pile by a fraction of their impulse,
+  // which is what makes the heap feel like loose pebbles instead of cement.
+  // High enough (20+) that side-by-side settled drops act as anchors and
+  // the pile mounds up vertically instead of spreading like water; low
+  // enough that the shockwave + restitution still produce a visible jiggle.
+  ROCK_DROP_SETTLED_MASS_RATIO: 22,
+  // Hard impacts (floor smack or contact with a settled neighbor above
+  // this closing speed) emit a radial shockwave that kicks every settled
+  // drop within IMPACT_RADIUS. The drop you actually hit got the real
+  // impulse; the shockwave is what makes the *rest* of the pile jump.
+  ROCK_DROP_IMPACT_THRESHOLD: 160,
+  ROCK_DROP_IMPACT_STRENGTH: 0.42,
+  ROCK_DROP_IMPACT_RADIUS: 30,
   CANTOR_MANA_COST: 1,
 
   // Cantor cantrip — a hovering caster that fires a slow projectile at the
@@ -1397,19 +1423,22 @@ export function spawnRockDrop(
     tier = t < TUNING.SEED_TIER_2_THRESHOLD ? 1 : t < TUNING.SEED_TIER_3_THRESHOLD ? 2 : 3;
   }
 
-  // Drops launch out of the rock with real physics — direction is a
-  // random angle in a wide cone biased toward the pile corner so the
-  // burst reads as a spray rather than a synchronized jet. Most drops
-  // arc cornerward, but ~20% pop the other way and bounce back off the
-  // wall, which sells the chaos. Gravity, floor bounce, and pairwise
-  // collision in rockDropsSystem do the rest.
+  // Drops launch out of the rock with real physics — mostly STRAIGHT UP
+  // (small horizontal jitter only) so they land in a tight cluster
+  // around the strike point and mound up via pairwise collisions rather
+  // than tiling the floor. Mostly-vertical launch + iterative resolver
+  // = pile builds tall instead of spreading like water across the floor.
+  // A small fraction get a sideways shove for visual chaos but the
+  // amount is well below escape velocity from the pile footprint.
   const cornerBias = Math.sign(TUNING.ROCK_PILE_CORNER_X - originX) || 1;
-  const dir = Math.random() < 0.8 ? cornerBias : -cornerBias;
-  // Angle measured from straight up: small angle = mostly vertical pop,
-  // wide angle = sideways skim. ~22°–75° gives a believable spray cone.
-  const angle = (22 + Math.random() * 53) * (Math.PI / 180);
-  const speed = 180 + Math.random() * 110;
-  const vx = Math.sin(angle) * speed * dir;
+  const sideways = Math.random() < 0.18;
+  const dir = sideways ? (Math.random() < 0.7 ? cornerBias : -cornerBias) : 0;
+  // Mostly vertical. The horizontal component is small even when present;
+  // sin(8°)≈0.14 vs sin(75°)≈0.97 in the old cone — a 7× reduction in
+  // horizontal launch speed.
+  const angle = (3 + Math.random() * 9) * (Math.PI / 180);
+  const speed = 220 + Math.random() * 60;
+  const vx = Math.sin(angle) * speed * dir + (Math.random() - 0.5) * 18;
   const vy = -Math.cos(angle) * speed;
   // Settle target fields are kept on the entity for save-shape compat;
   // the new physics simulation ignores them.

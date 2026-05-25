@@ -85,6 +85,10 @@ function integrateSubstep(drops: RockDrop[], dt: number): void {
   const spinDrag = Math.pow(0.65, dt);
   const rightWall = TUNING.ROCK_PILE_RIGHT_WALL - r;
   const leftWall = TUNING.ROCK_PILE_LEFT_WALL + r;
+  const settledMass = TUNING.ROCK_DROP_SETTLED_MASS_RATIO;
+  const impactThreshold = TUNING.ROCK_DROP_IMPACT_THRESHOLD;
+  const impactStrength = TUNING.ROCK_DROP_IMPACT_STRENGTH;
+  const impactRadius = TUNING.ROCK_DROP_IMPACT_RADIUS;
 
   // 1) Gravity + damping + integration. Settled drops are skipped so
   //    they truly hold their stack position — without this, even with
@@ -101,17 +105,21 @@ function integrateSubstep(drops: RockDrop[], dt: number): void {
     d.spin *= spinDrag;
   }
 
-  // 2) Floor + side walls. Position correction uses slop — small
-  //    overshoots are absorbed silently; large overshoots are corrected
-  //    a fraction at a time. Velocity response uses the threshold so
-  //    soft floor taps don't micro-bounce.
+  // 2) Floor + side walls — velocity response only. Position is enforced
+  //    by the iterative resolver in step 4, which fully eliminates
+  //    overlap (no more soft Baumgarte slop on the boundaries).
   for (const d of drops) {
     if (d.settled) continue;
     if (d.y > floorY) {
-      const over = d.y - floorY;
-      if (over > slop) d.y -= (over - slop) * correction;
       if (d.vy > velThreshold) {
+        const incomingVy = d.vy;
         d.vy = -d.vy * restitution;
+        // Hard floor smack — splash the absorbed downward energy outward
+        // to every settled drop in a small radius. This is what makes the
+        // pile *visibly thump* when a new drop hits ground next to it.
+        if (incomingVy > impactThreshold) {
+          shockwave(drops, d.x, floorY, incomingVy * impactStrength, impactRadius);
+        }
       } else if (d.vy > 0) {
         d.vy = 0;
       }
@@ -121,24 +129,21 @@ function integrateSubstep(drops: RockDrop[], dt: number): void {
       d.spin = d.vx / r;
     }
     if (d.x > rightWall) {
-      const over = d.x - rightWall;
-      if (over > slop) d.x -= (over - slop) * correction;
       if (d.vx > velThreshold) d.vx = -d.vx * restitution;
       else if (d.vx > 0) d.vx = 0;
     }
     if (d.x < leftWall) {
-      const over = leftWall - d.x;
-      if (over > slop) d.x += (over - slop) * correction;
       if (d.vx < -velThreshold) d.vx = -d.vx * restitution;
       else if (d.vx < 0) d.vx = 0;
     }
   }
 
-  // 3) Pairwise circle-vs-circle. Position correction uses slop +
-  //    fractional fix; velocity response uses the restitution threshold.
-  //    Settled drops are immovable obstacles for soft contacts; a hit
-  //    above WAKE_VEL wakes them back to dynamic so a falling drop can
-  //    still jostle the pile.
+  // 3) Pairwise velocity response. Position correction has moved to the
+  //    iterative resolver in step 4, so this loop only handles the
+  //    momentum side: restitution, wake-on-hard-impact, and shockwave.
+  //    Two-settled pairs are still skipped — once both drops are at
+  //    rest against each other, re-solving the contact every frame
+  //    just bleeds energy into noise.
   for (let i = 0; i < drops.length; i++) {
     const a = drops[i];
     for (let j = i + 1; j < drops.length; j++) {
@@ -154,59 +159,148 @@ function integrateSubstep(drops: RockDrop[], dt: number): void {
       const dist = Math.sqrt(dist2);
       const nx = dx / dist;
       const ny = dy / dist;
-      const overlap = minDist - dist;
 
       const vRelN = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+      if (vRelN >= 0) continue;
       const closingSpeed = -vRelN;
 
-      if (
-        a.settled !== b.settled &&
-        closingSpeed > TUNING.ROCK_DROP_WAKE_VEL
-      ) {
+      // Mass ratio: settled = SETTLED_MASS_RATIO, dynamic = 1. Each side
+      // absorbs the OTHER's mass-share of the impulse.
+      const massA = a.settled ? settledMass : 1;
+      const massB = b.settled ? settledMass : 1;
+      const invTotal = 1 / (massA + massB);
+      const shareA = massB * invTotal;
+      const shareB = massA * invTotal;
+
+      const e = closingSpeed < velThreshold ? 0 : restitution;
+      const jMag = -(1 + e) * vRelN;
+      a.vx -= jMag * shareA * nx;
+      a.vy -= jMag * shareA * ny;
+      b.vx += jMag * shareB * nx;
+      b.vy += jMag * shareB * ny;
+
+      if (closingSpeed > TUNING.ROCK_DROP_WAKE_VEL) {
         if (a.settled) a.settled = false;
         if (b.settled) b.settled = false;
       }
 
-      // Position correction with slop. Settled drops don't move.
-      if (overlap > slop) {
-        const fix = (overlap - slop) * correction;
-        if (a.settled) {
-          b.x += nx * fix;
-          b.y += ny * fix;
-        } else if (b.settled) {
-          a.x -= nx * fix;
-          a.y -= ny * fix;
-        } else {
-          const half = fix * 0.5;
-          a.x -= nx * half;
-          a.y -= ny * half;
-          b.x += nx * half;
-          b.y += ny * half;
-        }
-      }
-
-      // Velocity response with restitution threshold. Below the
-      // threshold, treat as fully inelastic — the single biggest
-      // anti-jitter knob for stacking.
-      if (vRelN < 0) {
-        const e = closingSpeed < velThreshold ? 0 : restitution;
-        if (a.settled && !b.settled) {
-          const j = -(1 + e) * vRelN;
-          b.vx += j * nx;
-          b.vy += j * ny;
-        } else if (b.settled && !a.settled) {
-          const j = -(1 + e) * vRelN;
-          a.vx -= j * nx;
-          a.vy -= j * ny;
-        } else if (!a.settled && !b.settled) {
-          const j = -(1 + e) * vRelN * 0.5;
-          a.vx -= j * nx;
-          a.vy -= j * ny;
-          b.vx += j * nx;
-          b.vy += j * ny;
-        }
+      if (closingSpeed > impactThreshold) {
+        const cxImpact = (a.x + b.x) * 0.5;
+        const cyImpact = (a.y + b.y) * 0.5;
+        shockwave(drops, cxImpact, cyImpact, closingSpeed * impactStrength, impactRadius);
       }
     }
+  }
+
+  // 4) Iterative position resolution (Projected Gauss-Seidel). Each
+  //    iteration walks every pair and pushes overlaps fully to zero,
+  //    then re-clamps to the walls/floor. Multiple iterations let the
+  //    corrections propagate through stacks — a single pass would leave
+  //    the bottom of a tall pile partially buried because pushing two
+  //    drops apart can re-overlap them with a third. Settled drops
+  //    participate (they have finite mass) so a heavy drop landing on
+  //    them rearranges the heap geometry rather than clipping through.
+  const iterations = TUNING.ROCK_DROP_POS_ITERATIONS;
+  for (let iter = 0; iter < iterations; iter++) {
+    for (let i = 0; i < drops.length; i++) {
+      const a = drops[i];
+      for (let j = i + 1; j < drops.length; j++) {
+        const b = drops[j];
+        const dx = b.x - a.x;
+        if (dx > minDist || dx < -minDist) continue;
+        const dy = b.y - a.y;
+        if (dy > minDist || dy < -minDist) continue;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 >= minDist2) continue;
+
+        let nx: number;
+        let ny: number;
+        let overlap: number;
+        if (dist2 < 0.0001) {
+          // Perfectly coincident drops — pick a deterministic direction
+          // so they separate instead of NaN-ing the sqrt.
+          nx = 1;
+          ny = 0;
+          overlap = minDist;
+        } else {
+          const dist = Math.sqrt(dist2);
+          nx = dx / dist;
+          ny = dy / dist;
+          overlap = minDist - dist;
+        }
+
+        const massA = a.settled ? settledMass : 1;
+        const massB = b.settled ? settledMass : 1;
+        const invTotal = 1 / (massA + massB);
+        let shareA = massB * invTotal;
+        let shareB = massA * invTotal;
+        // Gravity-aware resolution: whichever drop is higher (smaller y)
+        // takes more of the fix. Two drops side-by-side on the floor
+        // would otherwise slide sideways and spread the pile like water;
+        // biasing the fix vertically forces the upper one to climb up
+        // and over instead. Bias scales with how horizontal the contact
+        // is — purely vertical contacts use the raw mass ratio.
+        const horizontality = 1 - Math.abs(ny);
+        if (horizontality > 0 && Math.abs(a.y - b.y) < r * 1.5) {
+          const upper = a.y < b.y ? 'a' : 'b';
+          const bias = horizontality * 0.6;
+          if (upper === 'a') {
+            shareA += bias * (1 - shareA);
+            shareB = 1 - shareA;
+          } else {
+            shareB += bias * (1 - shareB);
+            shareA = 1 - shareB;
+          }
+        }
+        a.x -= nx * overlap * shareA;
+        a.y -= ny * overlap * shareA;
+        b.x += nx * overlap * shareB;
+        b.y += ny * overlap * shareB;
+      }
+    }
+    // Re-clamp to walls + floor after the pair pass so corrections that
+    // pushed a drop through a boundary get snapped back. Without this,
+    // an iteration could leave a drop sub-pixel past the wall, which
+    // the next iteration would have to undo.
+    for (const d of drops) {
+      if (d.y > floorY) d.y = floorY;
+      if (d.x > rightWall) d.x = rightWall;
+      if (d.x < leftWall) d.x = leftWall;
+    }
+  }
+  // Slop and the legacy partial-correction are no longer used — kept in
+  // the TUNING table for save-shape compat only.
+  void slop;
+  void correction;
+}
+
+// Upward-biased impulse to every settled drop within `radius` of (cx, cy).
+// Strength falls off linearly to zero at the edge. The kick is almost
+// entirely vertical (the pile JUMPS) with only a faint horizontal nudge
+// scaled by direction — radial spread would flatten the heap, which is
+// exactly what we don't want. Gravity pulls everything back down within
+// a few frames and the iterative resolver re-stacks the contacts.
+function shockwave(
+  drops: RockDrop[],
+  cx: number,
+  cy: number,
+  strength: number,
+  radius: number,
+): void {
+  const r2 = radius * radius;
+  for (const d of drops) {
+    if (!d.settled) continue;
+    const dx = d.x - cx;
+    const dy = d.y - cy;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 > r2 || dist2 < 0.0001) continue;
+    const dist = Math.sqrt(dist2);
+    const falloff = 1 - dist / radius;
+    const impulse = strength * falloff;
+    const nx = dx / dist;
+    d.vx += nx * impulse * 0.12;
+    d.vy -= impulse * 0.85;
+    d.settled = false;
   }
 }
 

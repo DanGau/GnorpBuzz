@@ -59,6 +59,14 @@ export function deserialize(blob: string): GameState {
     d.claimedBy = null;
     if (typeof d.rotation !== 'number') d.rotation = 0;
     if (typeof d.spin !== 'number') d.spin = 0;
+    // Lift-tween state is owned by the carrying bee; bees are rebuilt fresh
+    // on load, so any persisted tween would strand the sprite at scale ~0.15
+    // off in space while the entity (and its physics box) sit at d.x/d.y.
+    d.liftT = undefined;
+    d.liftFromX = undefined;
+    d.liftFromY = undefined;
+    d.liftToX = undefined;
+    d.liftToY = undefined;
   }
   if (typeof merged.digSite.dropBudget !== 'number') merged.digSite.dropBudget = 0;
   if (!Array.isArray(merged.digSite.pendingHits)) merged.digSite.pendingHits = [];
