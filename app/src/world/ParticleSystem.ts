@@ -84,6 +84,13 @@ export class ParticleSystem {
     return null;
   }
 
+  // How many particles are currently in flight — for the perf overlay.
+  aliveCount(): number {
+    let n = 0;
+    for (const p of this.pool) if (p.alive) n++;
+    return n;
+  }
+
   private configure(p: Particle): void {
     switch (p.type) {
       case 'pollenPuff': {

@@ -35,6 +35,8 @@ import { Observer } from '../sim/observer';
 import { World } from '../world/World';
 import { WorldRenderer } from '../view/WorldRenderer';
 import { UI } from '../ui/UI';
+import { PerfMonitor } from '../perf/PerfMonitor';
+import { PerfOverlay } from '../perf/PerfOverlay';
 
 export interface GameSnapshot {
   tick: number;
@@ -87,6 +89,7 @@ export class Game {
   private skipRendering = false;
   private lastDeltaMs = 16.7;
   private boundUpdate = (ticker: Ticker) => this.update(ticker.deltaMS);
+  private perf = new PerfMonitor();
 
   constructor() {
     this.app = new Application();
@@ -205,6 +208,11 @@ export class Game {
     this.app.stage.addChild(this.stage);
     this.renderer.attach(this.app, this.stage, this.world);
     this.app.ticker.add(this.boundUpdate);
+    // Perf overlay — F3 toggles. Created here (not in constructor) so we
+    // know the DOM is ready and the canvas is mounted. The overlay holds
+    // its own ref to the monitor and registers a window keydown listener,
+    // so we don't need to hang on to the instance.
+    new PerfOverlay(this.perf);
 
     // Esc backs out of any selection — a natural way to leave the
     // zoomed-in hive view.
@@ -216,17 +224,24 @@ export class Game {
   private runSystems(dtMs: number): void {
     this.state.tick += 1;
     this.state.elapsedMs += dtMs;
-    flowerSystem(this.state, dtMs);
-    this.world.reconcile(this.state);
-    this.world.update(dtMs, this.state);
-    tickPendingHits(this.state, dtMs);
-    rockDropsSystem(this.state, dtMs);
-    digSiteSystem(this.state);
-    artifactSystem(this.state);
-    ascentSystem(this.state, dtMs);
+    this.perf.sample('flowers', () => flowerSystem(this.state, dtMs));
+    this.perf.sample('world.reconcile', () => this.world.reconcile(this.state));
+    this.perf.sample('world.update', () => this.world.update(dtMs, this.state));
+    this.perf.sample('pendingHits', () => tickPendingHits(this.state, dtMs));
+    this.perf.sample('rockDrops', () => rockDropsSystem(this.state, dtMs));
+    this.perf.sample('digSite', () => digSiteSystem(this.state));
+    this.perf.sample('artifact', () => artifactSystem(this.state));
+    this.perf.sample('ascent', () => ascentSystem(this.state, dtMs));
     this.lastDeltaMs = dtMs;
-    this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell, this.selectedUpgrades);
-    if (this.ui) this.ui.update();
+    this.perf.sample('renderer', () =>
+      this.renderer.update(this.state, this.world, dtMs, this.selectedId, this.selectedCell, this.selectedUpgrades),
+    );
+    if (this.ui) this.perf.sample('ui', () => this.ui!.update());
+    this.perf.recordFrame(dtMs);
+    this.perf.recordCount('drops', this.state.rockDrops.length);
+    this.perf.recordCount('bees', totalBees(this.state));
+    this.perf.recordCount('flowers', this.state.flowers.length);
+    this.perf.recordCount('particles', this.world.particles.aliveCount());
   }
 
   private update(deltaMS: number): void {
